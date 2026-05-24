@@ -26,5 +26,8 @@ alox-48 = "0.6.0"
 flate2 = "1.1.9"
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-http = "2.5.9"
-reqwest = { version = "0.13.3", features = ["json"] }
-
+image = "0.25.10"
+imageproc = "0.26.2"
+walkdir = "2.5.0"
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "native-tls"] }
+ab_glyph = "0.2.32"

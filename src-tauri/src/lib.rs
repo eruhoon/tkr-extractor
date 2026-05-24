@@ -1,8 +1,8 @@
 pub mod parser;
-
 use parser::ScriptEntry;
+use std::path::Path;
+use walkdir::WalkDir;
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn parse_rvdata(path: String) -> Result<Vec<ScriptEntry>, String> {
     parser::parse_rvdata(&path)
@@ -14,31 +14,95 @@ fn save_rvdata(original_path: String, new_path: String, updated_scripts: Vec<Scr
 }
 
 #[tauri::command]
-async fn translate_ollama(prompt: String) -> Result<String, String> {
-    let client = reqwest::Client::new();
-    let body = serde_json::json!({
-        "model": "gemma4:e4b",
-        "prompt": prompt,
-        "stream": false
-    });
+fn get_images_in_folder(folder_path: String) -> Result<Vec<String>, String> {
+    let mut images = Vec::new();
+    for entry in WalkDir::new(&folder_path).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                let ext = ext.to_lowercase();
+                if ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "bmp" {
+                    images.push(path.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    Ok(images)
+}
 
-    let res = client.post("http://127.0.0.1:11434/api/generate")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Reqwest failed: {}", e))?;
+#[tauri::command]
+fn read_image_file(path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(&path).map_err(|e| e.to_string())
+}
 
-    if !res.status().is_success() {
-        return Err(format!("Ollama HTTP Error: {}", res.status()));
+use image::{Rgba, RgbaImage};
+use imageproc::drawing::{draw_filled_rect_mut, draw_text_mut};
+use imageproc::rect::Rect;
+use ab_glyph::FontRef;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct OcrRegion {
+    ko_text: String,
+    x: f32, // 0~100 %
+    y: f32, // 0~100 %
+    w: f32,
+    h: f32,
+}
+
+#[tauri::command]
+fn draw_and_save_image(original_path: String, output_path: String, regions: Vec<OcrRegion>) -> Result<(), String> {
+    let mut img = image::open(&original_path).map_err(|e| e.to_string())?.to_rgba8();
+    let (width, height) = img.dimensions();
+
+    let font_bytes = std::fs::read("C:\\Windows\\Fonts\\malgun.ttf").map_err(|_| "윈도우 폰트(malgun.ttf)를 읽을 수 없습니다.")?;
+    let font = FontRef::try_from_slice(&font_bytes).map_err(|e| e.to_string())?;
+
+    for r in regions {
+        // 여유(패딩)를 약간 주어 원본 일본어를 더 잘 가리도록 함
+        let pad_w = (width as f32 * 0.02) as i32;
+        let pad_h = (height as f32 * 0.02) as i32;
+        let px = ((r.x / 100.0 * width as f32) as i32 - pad_w).max(0);
+        let py = ((r.y / 100.0 * height as f32) as i32 - pad_h).max(0);
+        let pw = ((r.w / 100.0 * width as f32) as u32 + (pad_w * 2) as u32).max(1);
+        let ph = ((r.h / 100.0 * height as f32) as u32 + (pad_h * 2) as u32).max(1);
+
+        // 검정색 배경 박스 (알파 200)
+        let rect = Rect::at(px, py).of_size(pw, ph);
+        draw_filled_rect_mut(&mut img, rect, Rgba([0, 0, 0, 200]));
+
+        // 글자 크기를 박스 높이의 70%로 설정하고, 너비가 너무 작으면 거기에 맞춤
+        let mut scale = (ph as f32 * 0.7).max(16.0);
+        let text_len = r.ko_text.chars().count().max(1) as f32;
+        // 박스 너비보다 글씨가 삐져나가지 않도록 스케일 조정
+        if scale * text_len > pw as f32 {
+            scale = (pw as f32 / text_len).max(12.0);
+        }
+        let ab_scale = ab_glyph::PxScale::from(scale);
+        
+        let tx = px + (pad_w / 2).max(2);
+        let ty = py + (pad_h / 2).max(2);
+
+        // 검은색 외곽선(Stroke)을 그리기 위해 상하좌우대각선 8방향으로 1~2px 밀어서 렌더링
+        let outline_color = Rgba([0, 0, 0, 255]);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                if dx != 0 || dy != 0 {
+                    draw_text_mut(&mut img, outline_color, tx + dx, ty + dy, ab_scale, &font, &r.ko_text);
+                }
+            }
+        }
+        
+        // 텍스트 그리기 (흰색 글씨)
+        draw_text_mut(&mut img, Rgba([255, 255, 255, 255]), tx, ty, ab_scale, &font, &r.ko_text);
     }
 
-    let json: serde_json::Value = res.json().await.map_err(|e| format!("JSON parse error: {}", e))?;
-    
-    if let Some(resp) = json.get("response").and_then(|v| v.as_str()) {
-        Ok(resp.to_string())
-    } else {
-        Err("Missing response field in Ollama output".into())
+    if let Some(parent) = Path::new(&output_path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
+    img.save(&output_path).map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -47,7 +111,13 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![parse_rvdata, save_rvdata, translate_ollama])
+        .invoke_handler(tauri::generate_handler![
+            parse_rvdata, 
+            save_rvdata, 
+            get_images_in_folder,
+            read_image_file,
+            draw_and_save_image
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

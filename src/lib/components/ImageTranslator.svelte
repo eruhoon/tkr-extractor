@@ -64,6 +64,15 @@
     }
   }
 
+  async function openSelectedFolder() {
+    if (!selectedFolder) return;
+    try {
+      await invoke('open_folder', { path: selectedFolder });
+    } catch (e) {
+      alert("폴더를 열 수 없습니다: " + e);
+    }
+  }
+
   export async function handleFileOrFolderSelect(path: string) {
     const lowerPath = path.toLowerCase();
     const isImage = lowerPath.endsWith('.png') || lowerPath.endsWith('.jpg') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.bmp');
@@ -313,8 +322,11 @@ Output ONLY the JSON array without any markdown or conversational text.`;
     <button class="btn" on:click={openFolder} disabled={isProcessing}>
       이미지 폴더 선택
     </button>
-    
+
     {#if selectedFolder}
+      <button class="btn" style="background-color: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.4); color: #fbbf24;" on:click={openSelectedFolder}>
+        📂 폴더 열기
+      </button>
       <span class="folder-path">{selectedFolder}</span>
     {/if}
     

@@ -48,8 +48,24 @@ Rules:
 
 Original text: "${sentence}"`;
 
-        const response: string = await invoke('translate_ollama', { prompt: prompt });
-        return response.trim().replace(/^["'](.*)["']$/, '$1'); // Remove surrounding quotes if present
+        const ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
+        const response = await fetch("http://127.0.0.1:11434/api/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                model: ollamaModelName,
+                prompt: prompt,
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Ollama 통신 실패: ${response.status} ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        const responseText: string = result.response || "";
+        return responseText.trim().replace(/^["'](.*)["']$/, '$1'); // Remove surrounding quotes if present
     } catch (e: any) {
         console.error("Translation error:", e);
         return `Translation Failed: ${e?.message || JSON.stringify(e) || e}`;

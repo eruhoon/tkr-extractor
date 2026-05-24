@@ -21,17 +21,19 @@
     translatedPath?: string;
   }
 
-  let selectedFolder = '';
-  let images: ImageEntry[] = [];
-  let selectedImage: ImageEntry | null = null;
-  let isProcessing = false;
-  let batchTotal = 0;
-  let batchCompleted = 0;
+  let { isDragging = false } = $props();
 
-  let ollamaModelName = 'gemma4:e4b';
-  let totalImagesProcessed = 0;
-  let showDebugPanel = false;
-  let debugLogs: string[] = [];
+  let selectedFolder = $state('');
+  let images = $state<ImageEntry[]>([]);
+  let selectedImage = $state<ImageEntry | null>(null);
+  let isProcessing = $state(false);
+  let batchTotal = $state(0);
+  let batchCompleted = $state(0);
+
+  let ollamaModelName = $state('gemma4:e4b');
+  let totalImagesProcessed = $state(0);
+  let showDebugPanel = $state(false);
+  let debugLogs = $state<string[]>([]);
 
   function addLog(msg: string) {
     const time = new Date().toLocaleTimeString();
@@ -59,6 +61,29 @@
     if (selected && typeof selected === 'string') {
       selectedFolder = selected;
       await loadImages(selected);
+    }
+  }
+
+  export async function handleFileOrFolderSelect(path: string) {
+    const lowerPath = path.toLowerCase();
+    const isImage = lowerPath.endsWith('.png') || lowerPath.endsWith('.jpg') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.bmp');
+    
+    const lastDot = path.lastIndexOf('.');
+    const ext = lastDot !== -1 ? path.substring(lastDot).toLowerCase() : '';
+    const hasExtension = ext.length > 1;
+
+    if (hasExtension && !isImage) {
+      alert("이미지 파일(.png, .jpg, .jpeg, .bmp) 또는 이미지 폴더만 선택할 수 있습니다.");
+      return;
+    }
+
+    if (isImage) {
+      const lastSlash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+      selectedFolder = lastSlash !== -1 ? path.substring(0, lastSlash) : path;
+      await loadImages(path);
+    } else {
+      selectedFolder = path;
+      await loadImages(path);
     }
   }
 
@@ -278,7 +303,12 @@ Output ONLY the JSON array without any markdown or conversational text.`;
   }
 </script>
 
-<div class="image-translator-container">
+<div class="image-translator-container" class:drag-active={isDragging}>
+  {#if isDragging}
+    <div class="drag-overlay">
+      <h2>Drop Image files or Folders here</h2>
+    </div>
+  {/if}
   <div class="top-bar">
     <button class="btn" on:click={openFolder} disabled={isProcessing}>
       이미지 폴더 선택
@@ -434,6 +464,27 @@ Output ONLY the JSON array without any markdown or conversational text.`;
     display: flex;
     flex-direction: column;
     height: 100%;
+    position: relative;
+  }
+
+  .drag-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(59, 130, 246, 0.2);
+    backdrop-filter: blur(4px);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 4px dashed var(--accent-color);
+    border-radius: 12px;
+    pointer-events: none;
+
+    h2 {
+      font-size: 2rem;
+      color: white;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
   }
 
   .top-bar {

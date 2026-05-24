@@ -105,6 +105,80 @@ fn draw_and_save_image(original_path: String, output_path: String, regions: Vec<
     Ok(())
 }
 
+use tauri::Emitter;
+
+#[derive(Clone, serde::Serialize)]
+struct ProgressPayload {
+    file_name: String,
+    current: usize,
+    total: usize,
+}
+
+#[tauri::command]
+async fn decompile_rgss3a(
+    app: tauri::AppHandle,
+    input_path: String,
+    output_path: String,
+) -> Result<(), String> {
+    let mut archive_content = std::fs::read(&input_path)
+        .map_err(|e| format!("아카이브 파일을 읽는 데 실패했습니다: {}", e))?;
+
+    let mut decrypter = rpgmad_lib::Decrypter::new();
+    let decrypted_entries: Vec<_> = decrypter.decrypt(&mut archive_content)
+        .map_err(|e| format!("복호화 오류가 발생했습니다: {}", e))?
+        .collect();
+
+    let total = decrypted_entries.len();
+    let output_dir = std::path::PathBuf::from(&output_path);
+
+    for (index, entry) in decrypted_entries.into_iter().enumerate() {
+        let path_str = String::from_utf8_lossy(entry.path).replace('\\', "/");
+        let dest_path = output_dir.join(&path_str);
+
+        if let Some(parent) = dest_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("폴더 생성 실패: {}", e))?;
+        }
+
+        std::fs::write(&dest_path, entry.data)
+            .map_err(|e| format!("파일 쓰기 실패 ({}): {}", path_str, e))?;
+
+        let _ = app.emit("decompile-progress", ProgressPayload {
+            file_name: path_str,
+            current: index + 1,
+            total,
+        });
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -116,7 +190,9 @@ pub fn run() {
             save_rvdata, 
             get_images_in_folder,
             read_image_file,
-            draw_and_save_image
+            draw_and_save_image,
+            decompile_rgss3a,
+            open_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

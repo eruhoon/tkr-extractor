@@ -16,45 +16,49 @@
     text: string;
     translatedText: string;
     originalCodeMatch: string;
+    errorMsg?: string;
   }
 
-  let scripts: ScriptEntry[] = [];
-  let selectedScript: ScriptEntry | null = null;
-  let extractedStrings: ExtractedString[] = [];
-  let isTranslating = false;
-  let batchTotal = 0;
-  let batchCompleted = 0;
-  let isLoading = false;
-  let tokenizerReady = false;
-  let isDragging = false;
-  let originalFilePath: string = '';
+  let { isDragging = false } = $props();
+
+  let scripts = $state<ScriptEntry[]>([]);
+  let selectedScript = $state<ScriptEntry | null>(null);
+  let extractedStrings = $state<ExtractedString[]>([]);
+  let isTranslating = $state(false);
+  let batchTotal = $state(0);
+  let batchCompleted = $state(0);
+  let isLoading = $state(false);
+  let tokenizerReady = $state(false);
+  let originalFilePath = $state('');
+
+  let ollamaModelName = $state('gemma4:e4b');
+  let showDebugPanel = $state(false);
+  let debugLogs = $state<string[]>([]);
+
+  function addLog(msg: string) {
+    const time = new Date().toLocaleTimeString();
+    debugLogs = [`[${time}] ${msg}`, ...debugLogs];
+  }
+
+  function saveModelName() {
+    localStorage.setItem('ollamaModelName', ollamaModelName);
+    alert('로컬 모델명이 저장되었습니다.');
+    addLog("모델명 변경됨: " + ollamaModelName);
+  }
 
   onMount(async () => {
+    ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
+    addLog("앱 초기화 완료. 모델명: " + ollamaModelName);
     try {
       await initTokenizer();
       tokenizerReady = true;
     } catch (e) {
       console.error("Tokenizer init failed", e);
+      addLog("토크나이저 초기화 실패: " + String(e));
     }
-
-    const unlistenDragEnter = await listen(TauriEvent.DRAG_ENTER, () => isDragging = true);
-    const unlistenDragLeave = await listen(TauriEvent.DRAG_LEAVE, () => isDragging = false);
-    const unlistenDrop = await listen<{ paths: string[] }>(TauriEvent.DRAG_DROP, (event) => {
-      isDragging = false;
-      const paths = event.payload.paths;
-      if (paths && paths.length > 0) {
-        loadFile(paths[0]);
-      }
-    });
-
-    return () => {
-      unlistenDragEnter();
-      unlistenDragLeave();
-      unlistenDrop();
-    };
   });
 
-  async function loadFile(path: string) {
+  export async function loadFile(path: string) {
     if (!path.endsWith('.rvdata') && !path.endsWith('.rvdata2')) {
       alert("Please select a .rvdata or .rvdata2 file.");
       return;
@@ -107,14 +111,47 @@
   async function handleTranslateRow(item: ExtractedString) {
     item.translatedText = "번역 중...";
     extractedStrings = [...extractedStrings];
+
+    const prompt = `Translate the following Japanese game script text into Korean. 
+Rules:
+1. Maintain the meaning and nuance of the original Japanese.
+2. Do not explain the translation, just output the exact Korean translation.
+3. Keep proper nouns and context consistent if possible.
+
+Original text: "${item.text}"`;
+
+    addLog(`[번역 요청] 원문: "${item.text}" | 모델명: ${ollamaModelName}`);
+
     try {
-        const trans = await translateSentenceOllama(item.text);
-        item.translatedText = trans;
-    } catch(e) {
-        console.error("Translation Error", e);
-        item.translatedText = "번역 실패";
+      const response = await fetch("http://127.0.0.1:11434/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: ollamaModelName,
+          prompt: prompt,
+          stream: false
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ollama 통신 실패: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      const responseText: string = result.response || "";
+      const cleanText = responseText.trim().replace(/^["'](.*)["']$/, '$1');
+      
+      item.translatedText = cleanText;
+      item.errorMsg = undefined;
+      addLog(`[번역 완료] 결과: "${cleanText}"`);
+    } catch(e: any) {
+      console.error("Translation Error", e);
+      const errMsg = e?.message || JSON.stringify(e) || String(e);
+      item.translatedText = "번역 실패";
+      item.errorMsg = errMsg;
+      addLog(`[번역 실패] 오류: ${errMsg}`);
     } finally {
-        extractedStrings = [...extractedStrings];
+      extractedStrings = [...extractedStrings];
     }
   }
 
@@ -199,6 +236,10 @@
   <header class="glass-panel header">
     <h1>TKR Extractor (Ollama)</h1>
     <div class="header-actions">
+      <div class="api-section">
+        <input type="text" bind:value={ollamaModelName} placeholder="Ollama 모델명 입력" class="api-input" />
+        <button class="btn-small btn-save" on:click={saveModelName}>저장</button>
+      </div>
       <button class="btn" on:click={openFile} disabled={isLoading}>
         {isLoading ? '불러오는 중...' : '파일 열기 (.rvdata2)'}
       </button>
@@ -248,9 +289,6 @@
             <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
               <div class="original-column">
                 <p class="original-text">{item.text}</p>
-                <button class="btn-small" on:click={() => handleTranslateRow(item)} disabled={item.translatedText === "번역 중..."}>
-                  {item.translatedText === "번역 중..." ? "번역 중" : "번역"}
-                </button>
               </div>
               <div class="translate-column">
                 <textarea 
@@ -259,6 +297,19 @@
                   placeholder="번역된 내용이 여기에 표시됩니다..."
                   disabled={item.translatedText === "번역 중..."}
                 ></textarea>
+                {#if item.translatedText === "번역 실패" && item.errorMsg}
+                  <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
+                    navigator.clipboard.writeText(item.errorMsg || '');
+                    alert("에러 로그가 클립보드에 복사되었습니다!");
+                  }}>
+                    ⚠️ 에러 발생 (로그 복사)
+                  </div>
+                {/if}
+              </div>
+              <div class="action-column">
+                <button class="btn-small" on:click={() => handleTranslateRow(item)} disabled={item.translatedText === "번역 중..."}>
+                  {item.translatedText === "번역 중..." ? "번역 중" : "번역"}
+                </button>
               </div>
             </div>
           {/each}
@@ -266,6 +317,32 @@
             <p class="empty">이 스크립트에는 추출할 일본어 문자열이 없습니다.</p>
           {/if}
         </div>
+
+        <!-- 디버그 패널 토글 영역 -->
+        <div class="debug-toggle-area" style="text-align: right; padding: 0.5rem; margin-top: 1rem;">
+          <button class="btn-small" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8;" on:click={() => showDebugPanel = !showDebugPanel}>
+            {showDebugPanel ? '디버그 로그 숨기기' : '디버그 로그 보기'}
+          </button>
+        </div>
+
+        <!-- 디버그 패널 -->
+        {#if showDebugPanel}
+        <div class="debug-panel glass-panel">
+          <div class="debug-header">
+            <h3>디버그 로그 (Ollama 통신 과정)</h3>
+            <button class="btn-small btn-save" on:click={() => debugLogs = []}>로그 지우기</button>
+          </div>
+          <div class="debug-content">
+            {#if debugLogs.length === 0}
+              <div class="log-entry" style="color: #64748b;">로그가 없습니다.</div>
+            {:else}
+              {#each debugLogs as log}
+                <div class="log-entry">{log}</div>
+              {/each}
+            {/if}
+          </div>
+        </div>
+        {/if}
       {:else}
         <div class="empty-state">
           <p>왼쪽에서 스크립트를 선택해주세요.</p>
@@ -281,6 +358,7 @@
     flex-direction: column;
     height: 100%;
     position: relative;
+    gap: 1rem;
   }
 
   .drag-overlay {
@@ -419,12 +497,15 @@
     }
 
     .string-row {
-      display: flex;
+      display: grid;
+      grid-template-columns: 1fr 1fr 100px;
+      align-items: stretch;
       background: rgba(15, 23, 42, 0.5);
       border: 1px solid var(--border-color);
       border-radius: 8px;
       overflow: hidden;
       transition: all 0.3s ease;
+      min-height: 80px;
 
       &.translating {
         border-color: var(--accent-color);
@@ -437,23 +518,23 @@
       }
 
       .original-column {
-        flex: 1;
         padding: 1rem;
         border-right: 1px solid var(--border-color);
         display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        gap: 0.5rem;
+        align-items: center;
+        word-break: break-all;
 
         .original-text {
           font-size: 1rem;
           line-height: 1.4;
-          word-break: break-all;
+          margin: 0;
         }
       }
 
       .translate-column {
-        flex: 1;
+        border-right: 1px solid var(--border-color);
+        display: flex;
+        position: relative;
         
         .trans-input {
           width: 100%;
@@ -472,7 +553,100 @@
             background: rgba(255, 255, 255, 0.02);
           }
         }
+
+        .error-indicator {
+          position: absolute;
+          bottom: 4px;
+          right: 8px;
+          background: rgba(239, 68, 68, 0.2);
+          border: 1px solid rgba(239, 68, 68, 0.5);
+          color: #f87171;
+          font-size: 0.72rem;
+          padding: 0.15rem 0.4rem;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: background 0.2s;
+          z-index: 10;
+          
+          &:hover {
+            background: rgba(239, 68, 68, 0.4);
+          }
+        }
       }
+
+      .action-column {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem;
+        background: rgba(0, 0, 0, 0.15);
+      }
+    }
+
+    .debug-panel {
+      margin-top: 1rem;
+      flex-shrink: 0;
+      height: 180px;
+      display: flex;
+      flex-direction: column;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      overflow: hidden;
+
+      .debug-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 1rem;
+        background: rgba(15, 23, 42, 0.8);
+        border-bottom: 1px solid var(--border-color);
+        
+        h3 { margin: 0; font-size: 0.9rem; color: #94a3b8; }
+      }
+
+      .debug-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0.75rem;
+        font-family: 'Consolas', 'Courier New', monospace;
+        font-size: 0.8rem;
+        color: #a7f3d0;
+        
+        .log-entry {
+          margin-bottom: 0.4rem;
+          white-space: pre-wrap;
+          word-break: break-all;
+          border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+          padding-bottom: 0.2rem;
+        }
+      }
+    }
+
+    .api-section {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-right: 1rem;
+    }
+
+    .api-input {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255,255,255,0.1);
+      color: white;
+      padding: 0.4rem 0.8rem;
+      border-radius: 4px;
+      width: 200px;
+      font-size: 0.85rem;
+    }
+
+    .api-input:focus {
+      outline: 2px solid var(--accent-color);
+    }
+
+    .btn-save {
+      background: #475569;
+      &:hover { background: #334155; }
     }
   }
 </style>

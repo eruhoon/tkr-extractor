@@ -55,7 +55,35 @@ fn draw_and_save_image(original_path: String, output_path: String, regions: Vec<
     let mut img = image::open(&original_path).map_err(|e| e.to_string())?.to_rgba8();
     let (width, height) = img.dimensions();
 
-    let font_bytes = std::fs::read("C:\\Windows\\Fonts\\malgun.ttf").map_err(|_| "윈도우 폰트(malgun.ttf)를 읽을 수 없습니다.")?;
+    let font_paths = vec![
+        #[cfg(target_os = "windows")]
+        "C:\\Windows\\Fonts\\malgun.ttf".to_string(),
+        #[cfg(target_os = "windows")]
+        "C:\\Windows\\Fonts\\malgunbd.ttf".to_string(),
+        #[cfg(target_os = "macos")]
+        "/System/Library/Fonts/Supplemental/AppleGothic.ttf".to_string(),
+        #[cfg(target_os = "macos")]
+        "/System/Library/Fonts/Supplemental/AppleMyungjo.ttf".to_string(),
+        #[cfg(target_os = "linux")]
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf".to_string(),
+        #[cfg(target_os = "linux")]
+        "/usr/share/fonts/nanum/NanumGothic.ttf".to_string(),
+    ];
+
+    let mut font_bytes = None;
+    for path in &font_paths {
+        if let Ok(bytes) = std::fs::read(path) {
+            font_bytes = Some(bytes);
+            break;
+        }
+    }
+
+    let font_bytes = font_bytes.ok_or_else(|| {
+        format!(
+            "시스템 폰트를 찾을 수 없습니다. 시도한 경로: {:?}",
+            font_paths
+        )
+    })?;
     let font = FontRef::try_from_slice(&font_bytes).map_err(|e| e.to_string())?;
 
     for r in regions {

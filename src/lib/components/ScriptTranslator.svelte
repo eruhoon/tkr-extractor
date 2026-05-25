@@ -9,6 +9,8 @@
     id: number;
     title: string;
     code: string;
+    count?: number;
+    translations?: { [key: string]: string };
   }
 
   interface ExtractedString {
@@ -22,8 +24,106 @@
   let { isDragging = false } = $props();
 
   let scripts = $state<ScriptEntry[]>([]);
-  let selectedScript = $state<ScriptEntry | null>(null);
+  let selectedSidebarItem = $state<SidebarItem | null>(null);
   let extractedStrings = $state<ExtractedString[]>([]);
+
+  let isScriptsFile = $derived(
+    originalFilePath.toLowerCase().split(/[/\\]/).pop()?.startsWith('scripts') ?? false
+  );
+
+  interface SidebarItem {
+    id: string | number;
+    title: string;
+    count: number;
+    completedCount: number;
+    isGroup: boolean;
+    scriptRef?: ScriptEntry;
+    groupEntries?: ScriptEntry[];
+  }
+
+  let sidebarItems = $derived.by<SidebarItem[]>(() => {
+    if (!scripts || scripts.length === 0) return [];
+
+    if (isScriptsFile) {
+      return scripts.map(s => {
+        const completed = getCompletedCount(s, true);
+        return {
+          id: s.id,
+          title: s.title,
+          count: s.count || 0,
+          completedCount: completed,
+          isGroup: false,
+          scriptRef: s
+        };
+      });
+    } else {
+      const groupsMap = new Map<string, ScriptEntry[]>();
+      for (const s of scripts) {
+        const key = getGroupKey(s.title);
+        if (!groupsMap.has(key)) {
+          groupsMap.set(key, []);
+        }
+        groupsMap.get(key)!.push(s);
+      }
+
+      const items: SidebarItem[] = [];
+
+      // 전체 보기 가상 아이템 추가
+      const totalCount = scripts.reduce((acc, curr) => acc + (curr.count || 0), 0);
+      const totalCompleted = scripts.reduce((acc, curr) => acc + getCompletedCount(curr, false), 0);
+      items.push({
+        id: "ALL_ITEMS",
+        title: "전체 보기",
+        count: totalCount,
+        completedCount: totalCompleted,
+        isGroup: true,
+        groupEntries: scripts
+      });
+
+      for (const [key, entries] of groupsMap.entries()) {
+        const totalCount = entries.reduce((acc, curr) => acc + (curr.count || 0), 0);
+        const completedCount = entries.reduce((acc, curr) => acc + getCompletedCount(curr, false), 0);
+        items.push({
+          id: key,
+          title: key,
+          count: totalCount,
+          completedCount: completedCount,
+          isGroup: true,
+          groupEntries: entries
+        });
+      }
+      return items;
+    }
+  });
+
+  function getCompletedCount(s: ScriptEntry, isScripts: boolean): number {
+    if (!s.translations) return 0;
+    
+    let completed = 0;
+    if (isScripts) {
+      const jpRegex = /(['"])(.*?[ぁ-んァ-ヶ一-龠]+.*?)\1/g;
+      let match;
+      while ((match = jpRegex.exec(s.code)) !== null) {
+        const text = match[2];
+        const trans = s.translations[text];
+        if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+          completed++;
+        }
+      }
+    } else {
+      const trans = s.translations[s.code];
+      if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+        completed = 1;
+      }
+    }
+    return completed;
+  }
+
+  function getGroupKey(title: string): string {
+    let key = title.split(' - Line ')[0];
+    key = key.replace(/ \[(Name|Description|Profile)\]/gi, '');
+    return key;
+  }
   let isTranslating = $state(false);
   let batchTotal = $state(0);
   let batchCompleted = $state(0);
@@ -60,14 +160,28 @@
 
   export async function loadFile(path: string) {
     if (!path.endsWith('.rvdata') && !path.endsWith('.rvdata2')) {
-      alert("Please select a .rvdata or .rvdata2 file.");
+      alert(".rvdata 또는 .rvdata2 데이터 파일을 선택해 주세요.");
       return;
     }
     isLoading = true;
     originalFilePath = path;
     try {
-      scripts = await invoke('parse_rvdata', { path });
-      selectedScript = null;
+      const filename = path.split(/[/\\]/).pop() || '';
+      const isScripts = filename.toLowerCase().startsWith('scripts');
+      
+      const loaded: ScriptEntry[] = await invoke('parse_rvdata', { path });
+      scripts = loaded.map(s => {
+        let count = 0;
+        if (isScripts) {
+          const jpRegex = /(['"])(.*?[ぁ-んァ-ヶ一-龠]+.*?)\1/g;
+          const matches = s.code.match(jpRegex);
+          count = matches ? matches.length : 0;
+        } else {
+          count = s.code ? 1 : 0;
+        }
+        return { ...s, count };
+      });
+      selectedSidebarItem = null;
       extractedStrings = [];
     } catch (e) {
       alert("Failed to load scripts: " + e);
@@ -90,20 +204,35 @@
     }
   }
 
-  function selectScript(script: ScriptEntry) {
-    selectedScript = script;
-    // Extract strings containing Japanese characters
-    const jpRegex = /(['"])(.*?[ぁ-んァ-ヶ一-龠]+.*?)\1/g;
-    const matches = [];
-    let match;
+  function selectSidebarItem(item: SidebarItem) {
+    selectedSidebarItem = item;
+    const matches: ExtractedString[] = [];
     let idCounter = 0;
-    while ((match = jpRegex.exec(script.code)) !== null) {
-        matches.push({ 
-          id: idCounter++, 
-          text: match[2],
-          originalCodeMatch: match[0],
-          translatedText: ''
+
+    if (!item.isGroup && item.scriptRef) {
+      const script = item.scriptRef;
+      const jpRegex = /(['"])(.*?[ぁ-んァ-ヶ一-龠]+.*?)\1/g;
+      let match;
+      while ((match = jpRegex.exec(script.code)) !== null) {
+          const text = match[2];
+          const translatedText = script.translations?.[text] || '';
+          matches.push({ 
+            id: idCounter++, 
+            text: text,
+            originalCodeMatch: match[0],
+            translatedText: translatedText
+          });
+      }
+    } else if (item.isGroup && item.groupEntries) {
+      for (const s of item.groupEntries) {
+        const translatedText = s.translations?.[s.code] || '';
+        matches.push({
+          id: s.id,
+          text: s.code,
+          originalCodeMatch: s.code,
+          translatedText: translatedText
         });
+      }
     }
     extractedStrings = matches;
   }
@@ -152,6 +281,7 @@ Original text: "${item.text}"`;
       addLog(`[번역 실패] 오류: ${errMsg}`);
     } finally {
       extractedStrings = [...extractedStrings];
+      saveCurrentTranslations();
     }
   }
 
@@ -175,8 +305,42 @@ Original text: "${item.text}"`;
   async function saveFile() {
     if (!originalFilePath) return;
 
-    // Apply translations to the currently selected script first
-    applyTranslationsToScript();
+    // 현재 선택된 스크립트의 번역 상태를 먼저 저장
+    saveCurrentTranslations();
+
+    const filename = originalFilePath.split(/[/\\]/).pop() || '';
+    const isScripts = filename.toLowerCase().startsWith('scripts');
+
+    const updatedScripts = scripts.map(s => {
+      if (!s.translations || Object.keys(s.translations).length === 0) {
+        return { id: s.id, title: s.title, code: s.code };
+      }
+
+      let newCode = s.code;
+      if (isScripts) {
+        for (const [originalText, translatedText] of Object.entries(s.translations)) {
+          if (translatedText && translatedText !== "번역 중..." && translatedText !== "번역 실패") {
+            const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const escapedText = escapeRegex(originalText);
+            const singleQuoteRegex = new RegExp(`'${escapedText}'`, 'g');
+            const doubleQuoteRegex = new RegExp(`"${escapedText}"`, 'g');
+            newCode = newCode.replace(singleQuoteRegex, `'${translatedText}'`);
+            newCode = newCode.replace(doubleQuoteRegex, `"${translatedText}"`);
+          }
+        }
+      } else {
+        const translatedText = s.translations[s.code];
+        if (translatedText && translatedText !== "번역 중..." && translatedText !== "번역 실패") {
+          newCode = translatedText;
+        }
+      }
+
+      return {
+        id: s.id,
+        title: s.title,
+        code: newCode
+      };
+    });
 
     const newPath = await save({
       defaultPath: originalFilePath.replace('.rvdata', '_translated.rvdata'),
@@ -191,7 +355,7 @@ Original text: "${item.text}"`;
         await invoke('save_rvdata', { 
           originalPath: originalFilePath, 
           newPath: newPath, 
-          updatedScripts: scripts 
+          updatedScripts: updatedScripts 
         });
         alert('성공적으로 저장되었습니다!');
       } catch (e) {
@@ -200,27 +364,37 @@ Original text: "${item.text}"`;
     }
   }
 
-  function applyTranslationsToScript() {
-    if (!selectedScript) return;
+  function saveCurrentTranslations() {
+    if (!selectedSidebarItem) return;
     
-    let newCode = selectedScript.code;
-    for (const item of extractedStrings) {
-      if (item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패") {
-        // Find exactly the original quote match and replace its inner text
-        // Note: Replacing strings in code can be tricky if there are duplicates, we'll replace globally for this snippet
-        const originalQuote = item.originalCodeMatch[0]; // ' or "
-        const replacement = originalQuote + item.translatedText + originalQuote;
-        // Escape special chars for regex
-        const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        newCode = newCode.replace(new RegExp(escapeRegex(item.originalCodeMatch), 'g'), replacement);
+    if (!selectedSidebarItem.isGroup && selectedSidebarItem.scriptRef) {
+      const script = selectedSidebarItem.scriptRef;
+      const transMap: { [key: string]: string } = {};
+      for (const item of extractedStrings) {
+        if (item.translatedText) {
+          transMap[item.text] = item.translatedText;
+        }
       }
-    }
-    selectedScript.code = newCode;
-    
-    // Update the scripts array
-    const idx = scripts.findIndex(s => s.id === selectedScript!.id);
-    if (idx !== -1) {
-      scripts[idx] = selectedScript;
+      script.translations = transMap;
+      
+      const idx = scripts.findIndex(s => s.id === script.id);
+      if (idx !== -1) {
+        scripts[idx] = script;
+      }
+    } else if (selectedSidebarItem.isGroup && selectedSidebarItem.groupEntries) {
+      for (const item of extractedStrings) {
+        const scriptId = item.id;
+        const idx = scripts.findIndex(s => s.id === scriptId);
+        if (idx !== -1) {
+          const s = scripts[idx];
+          const transMap: { [key: string]: string } = {};
+          if (item.translatedText) {
+            transMap[s.code] = item.translatedText;
+          }
+          s.translations = transMap;
+          scripts[idx] = s;
+        }
+      }
     }
   }
 
@@ -229,7 +403,7 @@ Original text: "${item.text}"`;
 <div class="app-container" class:drag-active={isDragging}>
   {#if isDragging}
     <div class="drag-overlay">
-      <h2>Drop Scripts.rvdata/2 here</h2>
+      <h2>Drop .rvdata or .rvdata2 here</h2>
     </div>
   {/if}
 
@@ -241,7 +415,7 @@ Original text: "${item.text}"`;
         <button class="btn-small btn-save" on:click={saveModelName}>저장</button>
       </div>
       <button class="btn" on:click={openFile} disabled={isLoading}>
-        {isLoading ? '불러오는 중...' : '파일 열기 (.rvdata2)'}
+        {isLoading ? '불러오는 중...' : '데이터 파일 열기 (.rvdata2)'}
       </button>
       <button class="btn btn-success" on:click={saveFile} disabled={scripts.length === 0}>
         복사본으로 변환/저장
@@ -250,28 +424,46 @@ Original text: "${item.text}"`;
   </header>
 
   <main class="main-content">
-    <aside class="sidebar glass-panel scrollbar-hidden">
-      <h3>Scripts ({scripts.length})</h3>
+    <aside class="sidebar glass-panel">
+      <h3 class="sidebar-header">
+        <span>대사 리스트</span>
+        <span class="header-badge">{sidebarItems.filter(i => i.id !== "ALL_ITEMS").length}</span>
+      </h3>
       <ul class="script-list">
-        {#each scripts as script, idx}
+        {#each sidebarItems as item, idx}
           <li 
-            class:active={selectedScript?.id === script.id} 
+            class:active={selectedSidebarItem?.id === item.id} 
+            class:disabled={isTranslating}
             on:click={() => {
-              applyTranslationsToScript();
-              selectScript(script);
+              if (isTranslating) return;
+              saveCurrentTranslations();
+              selectSidebarItem(item);
             }}
           >
             <span class="id">{idx}</span>
-            <span class="title">{script.title || 'Untitled'}</span>
+            <span class="title">{item.title || 'Untitled'}</span>
+            {#if item.count !== undefined && item.count > 0}
+              <span class="count-badge" class:fully-translated={item.completedCount === item.count}>
+                {item.completedCount}/{item.count}
+              </span>
+            {/if}
           </li>
         {/each}
       </ul>
     </aside>
 
     <section class="content-area glass-panel scrollbar-hidden">
-      {#if selectedScript}
+      {#if selectedSidebarItem}
         <div class="content-header">
-          <h2>{selectedScript.title} - 추출된 문자열 ({extractedStrings.length})</h2>
+          <h2 style="display: inline-flex; align-items: center; gap: 0.5rem;">
+            {selectedSidebarItem.title}
+            {#if extractedStrings.length > 0}
+              {@const completed = extractedStrings.filter(i => i.translatedText && i.translatedText !== "번역 중..." && i.translatedText !== "번역 실패" && i.translatedText.trim() !== "").length}
+              <span class="count-badge" class:fully-translated={completed === extractedStrings.length}>
+                {completed}/{extractedStrings.length}
+              </span>
+            {/if}
+          </h2>
           <div style="display: flex; align-items: center; gap: 1rem;">
             {#if isTranslating && batchTotal > 0}
               <span style="color: var(--accent-color); font-weight: bold;">
@@ -385,10 +577,10 @@ Original text: "${item.text}"`;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 2rem;
+    padding: 0.8rem 1.5rem;
     
     h1 {
-      font-size: 1.5rem;
+      font-size: 1.2rem;
       font-weight: 600;
       background: linear-gradient(to right, #60a5fa, #a78bfa);
       -webkit-background-clip: text;
@@ -419,6 +611,27 @@ Original text: "${item.text}"`;
     &:hover { background: var(--accent-hover); }
   }
 
+  .count-badge {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 9999px;
+    font-weight: 600;
+    align-self: center;
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    flex-shrink: 0;
+    display: inline-block;
+    line-height: 1;
+    transition: all 0.3s ease;
+
+    &.fully-translated {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border-color: rgba(16, 185, 129, 0.25);
+    }
+  }
+
   .main-content {
     display: flex;
     flex: 1;
@@ -430,14 +643,34 @@ Original text: "${item.text}"`;
     width: 300px;
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
     
-    h3 {
+    .sidebar-header {
+      flex-shrink: 0;
       padding: 1rem;
       border-bottom: 1px solid var(--border-color);
+      font-size: 1.05rem;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      .header-badge {
+        background: rgba(255, 255, 255, 0.08);
+        color: #94a3b8;
+        font-size: 0.75rem;
+        padding: 0.15rem 0.45rem;
+        border-radius: 9999px;
+        font-weight: 600;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+      }
     }
     
     .script-list {
+      flex: 1;
+      overflow-y: auto;
       list-style: none;
       padding: 0.5rem;
       
@@ -454,6 +687,14 @@ Original text: "${item.text}"`;
           font-size: 0.8rem;
           min-width: 2rem;
         }
+
+        .title {
+          flex: 1;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          margin-right: 0.5rem;
+        }
         
         &:hover {
           background: rgba(255, 255, 255, 0.05);
@@ -462,6 +703,12 @@ Original text: "${item.text}"`;
         &.active {
           background: rgba(59, 130, 246, 0.2);
           border-left: 3px solid var(--accent-color);
+        }
+
+        &.disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+          pointer-events: none;
         }
       }
     }
@@ -479,7 +726,10 @@ Original text: "${item.text}"`;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 1rem;
-      h2 { font-weight: 500; }
+      h2 { 
+        font-size: 1.2rem; 
+        font-weight: 500; 
+      }
     }
     
     .empty-state {

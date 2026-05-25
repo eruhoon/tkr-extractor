@@ -21,18 +21,24 @@
     total: number;
   }
 
-  onMount(async () => {
+  onMount(() => {
+    let unlistenProgress: (() => void) | undefined;
+
     // Rust 백엔드로부터 실시간 진행 상황 이벤트 수신
-    const unlistenProgress = await listen<ProgressPayload>('decompile-progress', (event) => {
-      const { file_name, current, total } = event.payload;
-      currentFile = file_name;
-      currentCount = current;
-      totalFiles = total;
-      addLog(`[${current}/${total}] 추출됨: ${file_name}`);
-    });
+    const setup = async () => {
+      unlistenProgress = await listen<ProgressPayload>('decompile-progress', (event) => {
+        const { file_name, current, total } = event.payload;
+        currentFile = file_name;
+        currentCount = current;
+        totalFiles = total;
+        addLog(`[${current}/${total}] 추출됨: ${file_name}`);
+      });
+    };
+
+    setup();
 
     return () => {
-      unlistenProgress();
+      if (unlistenProgress) unlistenProgress();
     };
   });
 
@@ -103,6 +109,7 @@
     addLog(`출력 경로: ${outputPath}`);
 
     try {
+      await invoke('prevent_sleep');
       await invoke('decompile_rgss3a', { inputPath, outputPath });
       addLog("🎉 디컴파일이 성공적으로 완료되었습니다!");
       addLog(`결과 파일들이 '${outputPath}'에 안전하게 저장되었습니다.`);
@@ -110,6 +117,7 @@
       addLog(`❌ [에러 발생] 디컴파일 실패: ${e}`);
       alert(`디컴파일 중 오류가 발생했습니다: ${e}`);
     } finally {
+      await invoke('allow_sleep');
       isRunning = false;
     }
   }
@@ -266,6 +274,8 @@
     justify-content: space-between;
     align-items: center;
     padding: 1rem 2rem;
+    position: relative;
+    z-index: 10;
     
     h1 {
       font-size: 1.5rem;

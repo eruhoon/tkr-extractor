@@ -2,6 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
+  import { fetch } from '@tauri-apps/plugin-http';
 
   interface OcrTextRegion {
     ja_text: string;
@@ -27,6 +28,7 @@
   let images = $state<ImageEntry[]>([]);
   let selectedImage = $state<ImageEntry | null>(null);
   let isProcessing = $state(false);
+  let cancelRequested = $state(false);
   let batchTotal = $state(0);
   let batchCompleted = $state(0);
 
@@ -203,7 +205,7 @@ Output ONLY the JSON array without any markdown or conversational text.`;
       const responseText = result.response || "";
       addLog(`[${img.name}] 응답 수신 완료 (${((endTime-startTime)/1000).toFixed(1)}초). 원시 응답 텍스트:\n${responseText}`);
       
-      let parsedRegions = [];
+      let parsedRegions: OcrTextRegion[] = [];
       try {
         const jsonMatch = responseText.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
         const cleanedText = jsonMatch ? jsonMatch[0] : responseText;
@@ -282,18 +284,34 @@ Output ONLY the JSON array without any markdown or conversational text.`;
     if (pendingImages.length === 0) return;
 
     isProcessing = true;
+    cancelRequested = false;
     batchTotal = pendingImages.length;
     batchCompleted = 0;
 
-    for (const img of pendingImages) {
-      await processImageOllama(img);
-      batchCompleted++;
+    try {
+      await invoke('prevent_sleep');
+      for (const img of pendingImages) {
+        if (cancelRequested) {
+          addLog("사용자에 의해 이미지 일괄 번역이 중단되었습니다.");
+          break;
+        }
+        await processImageOllama(img);
+        batchCompleted++;
+      }
+    } catch (e) {
+      console.error("Batch image translation error", e);
+    } finally {
+      await invoke('allow_sleep');
+      isProcessing = false;
+      batchTotal = 0;
+      batchCompleted = 0;
+      if (cancelRequested) {
+        alert("이미지 일괄 번역이 중단되었습니다.");
+      } else {
+        alert("이미지 일괄 번역이 완료되었습니다!");
+      }
+      cancelRequested = false;
     }
-
-    isProcessing = false;
-    batchTotal = 0;
-    batchCompleted = 0;
-    alert("이미지 일괄 번역이 완료되었습니다!");
   }
 
   function getStatusLabel(status: string) {
@@ -374,11 +392,14 @@ Output ONLY the JSON array without any markdown or conversational text.`;
       <span class="progress-text">
         {batchCompleted} / {batchTotal} 완료
       </span>
+      <button class="btn btn-danger" style="background-color: #ef4444;" on:click={() => cancelRequested = true}>
+        중단하기
+      </button>
+    {:else}
+      <button class="btn btn-success" on:click={handleBatchTranslate} disabled={images.length === 0}>
+        이미지 일괄 번역
+      </button>
     {/if}
-    
-    <button class="btn btn-success" on:click={handleBatchTranslate} disabled={isProcessing || images.length === 0}>
-      {isProcessing ? '로컬 일괄 처리 중...' : '이미지 일괄 번역'}
-    </button>
   </div>
 
   <div class="main-workspace">
@@ -408,7 +429,7 @@ Output ONLY the JSON array without any markdown or conversational text.`;
             <span class={`status-badge status-${selectedImage.status}`}>
               {getStatusLabel(selectedImage.status)}
             </span>
-            <button class="btn-small" on:click={() => processImageOllama(selectedImage)} disabled={isProcessing || !ollamaModelName}>
+            <button class="btn-small" on:click={() => { if (selectedImage) processImageOllama(selectedImage); }} disabled={isProcessing || !ollamaModelName}>
               현재 이미지 번역
             </button>
           </div>
@@ -458,8 +479,10 @@ Output ONLY the JSON array without any markdown or conversational text.`;
                 <div class="error-header">
                   <strong>오류 발생 / 파싱 실패</strong>
                   <button class="btn-small btn-copy" on:click={() => {
-                    navigator.clipboard.writeText(selectedImage.errorMsg || '');
-                    alert('에러 내용이 복사되었습니다.');
+                    if (selectedImage) {
+                      navigator.clipboard.writeText(selectedImage.errorMsg || '');
+                      alert('에러 내용이 복사되었습니다.');
+                    }
                   }}>에러 복사</button>
                 </div>
                 <div class="error-content">{selectedImage.errorMsg}</div>
@@ -468,7 +491,15 @@ Output ONLY the JSON array without any markdown or conversational text.`;
           </div>
         </div>
       {:else}
-        <div class="empty-state"><p>왼쪽 목록에서 이미지를 선택해주세요.</p></div>
+        <div class="empty-state" style="display: flex; flex-direction: column; gap: 0.5rem; text-align: center;">
+          {#if selectedFolder && images.length === 0}
+            <span style="font-size: 2rem;">🖼️</span>
+            <p style="color: #ef4444; font-weight: 500;">선택한 폴더에 이미지 파일(.png, .jpg, .jpeg)이 존재하지 않습니다.</p>
+          {:else}
+            <span style="font-size: 2rem;">🖼️</span>
+            <p>왼쪽 목록에서 이미지를 선택해주세요.</p>
+          {/if}
+        </div>
       {/if}
 
       <!-- 디버그 패널 토글 영역 -->

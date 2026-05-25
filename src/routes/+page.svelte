@@ -13,26 +13,34 @@
   let scriptTranslatorRef = $state<any>(null);
   let imageTranslatorRef = $state<any>(null);
 
-  onMount(async () => {
+  onMount(() => {
+    let unlistenDragEnter: (() => void) | undefined;
+    let unlistenDragLeave: (() => void) | undefined;
+    let unlistenDrop: (() => void) | undefined;
+
     // 윈도우 전역에서 드래그 앤 드롭을 단 한 번만 구독
-    const unlistenDragEnter = await listen(TauriEvent.DRAG_ENTER, () => {
-      isDragging = true;
-    });
-    const unlistenDragLeave = await listen(TauriEvent.DRAG_LEAVE, () => {
-      isDragging = false;
-    });
-    const unlistenDrop = await listen<{ paths: string[] }>(TauriEvent.DRAG_DROP, (event) => {
-      isDragging = false;
-      const paths = event.payload.paths;
-      if (paths && paths.length > 0) {
-        handleGlobalDrop(paths[0]);
-      }
-    });
+    const setup = async () => {
+      unlistenDragEnter = await listen(TauriEvent.DRAG_ENTER, () => {
+        isDragging = true;
+      });
+      unlistenDragLeave = await listen(TauriEvent.DRAG_LEAVE, () => {
+        isDragging = false;
+      });
+      unlistenDrop = await listen<{ paths: string[] }>(TauriEvent.DRAG_DROP, (event) => {
+        isDragging = false;
+        const paths = event.payload.paths;
+        if (paths && paths.length > 0) {
+          handleGlobalDrop(paths[0]);
+        }
+      });
+    };
+
+    setup();
 
     return () => {
-      unlistenDragEnter();
-      unlistenDragLeave();
-      unlistenDrop();
+      if (unlistenDragEnter) unlistenDragEnter();
+      if (unlistenDragLeave) unlistenDragLeave();
+      if (unlistenDrop) unlistenDrop();
     };
   });
 

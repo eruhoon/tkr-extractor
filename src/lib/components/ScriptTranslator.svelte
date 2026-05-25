@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, TauriEvent } from '@tauri-apps/api/event';
-  import { open, save } from '@tauri-apps/plugin-dialog';
+  import { open, save, ask } from '@tauri-apps/plugin-dialog';
+  import { fetch } from '@tauri-apps/plugin-http';
   import { translateSentenceOllama } from '$lib/translator';
 
   interface ScriptEntry {
@@ -126,9 +127,14 @@
     return key;
   }
   let isTranslating = $state(false);
+  let cancelRequested = $state(false);
   let batchTotal = $state(0);
   let batchCompleted = $state(0);
   let isLoading = $state(false);
+  let selectedFolder = $state('');
+  let rvdataFiles = $state<string[]>([]);
+  let selectedFileInFolder = $state('');
+  let showOpenMenu = $state(false);
 
   let ollamaModelName = $state('gemma4:e4b');
   let availableModels = $state<{name: string}[]>([]);
@@ -148,35 +154,96 @@
     addLog("모델명 변경됨: " + ollamaModelName);
   }
 
-  onMount(async () => {
+  onMount(() => {
     ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
     addLog("앱 초기화 완료. 모델명: " + ollamaModelName);
 
-    try {
-      const res = await fetch("http://127.0.0.1:11434/api/tags");
-      if (res.ok) {
-        const data = await res.json();
-        availableModels = data.models || [];
-        if (availableModels.length > 0 && !localStorage.getItem('ollamaModelName')) {
-          ollamaModelName = availableModels[0].name;
-          localStorage.setItem('ollamaModelName', ollamaModelName);
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (showOpenMenu && !target.closest('.dropdown')) {
+        showOpenMenu = false;
+      }
+    };
+    window.addEventListener('click', handleOutsideClick);
+
+    const initOllama = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:11434/api/tags");
+        if (res.ok) {
+          const data = await res.json();
+          availableModels = data.models || [];
+          if (availableModels.length > 0 && !localStorage.getItem('ollamaModelName')) {
+            ollamaModelName = availableModels[0].name;
+            localStorage.setItem('ollamaModelName', ollamaModelName);
+          }
+          ollamaStatus = 'online';
+        } else {
+          ollamaStatus = 'offline';
         }
-        ollamaStatus = 'online';
-      } else {
+      } catch (e) {
+        addLog("Ollama 서버 연결 실패: 로컬 서버가 켜져 있는지 확인하세요.");
         ollamaStatus = 'offline';
       }
-    } catch (e) {
-      addLog("Ollama 서버 연결 실패: 로컬 서버가 켜져 있는지 확인하세요.");
-      ollamaStatus = 'offline';
-    }
+    };
+
+    initOllama();
+
+    return () => {
+      window.removeEventListener('click', handleOutsideClick);
+    };
   });
 
   export async function loadFile(path: string) {
+    isLoading = true;
+    
+    // Check if path is a directory (e.g. dragged folder)
+    try {
+      const isDir: boolean = await invoke('is_directory', { path });
+      if (isDir) {
+        selectedFolder = path;
+        const files: string[] = await invoke('get_rvdata_in_folder', { folderPath: selectedFolder });
+        rvdataFiles = files;
+        selectedFileInFolder = '';
+        scripts = [];
+        extractedStrings = [];
+        selectedSidebarItem = null;
+        addLog(`폴더 로드 완료. ${files.length}개의 데이터 파일을 찾았습니다: ${path.split(/[/\\]/).pop()}`);
+        isLoading = false;
+        return;
+      }
+    } catch (err) {
+      console.error("is_directory check failed", err);
+    }
+
     if (!path.endsWith('.rvdata') && !path.endsWith('.rvdata2')) {
       alert(".rvdata 또는 .rvdata2 데이터 파일을 선택해 주세요.");
+      isLoading = false;
       return;
     }
-    isLoading = true;
+    
+    let stagedPath = path.replace(/\.(rvdata2?)$/i, '_staged.json');
+    let shouldApplyStaged = false;
+    
+    try {
+      const hasStaged: boolean = await invoke('check_file_exists', { path: stagedPath });
+      addLog(`임시 파일 감지 결과: ${hasStaged} | 경로: ${stagedPath.split(/[/\\]/).pop()}`);
+      if (hasStaged) {
+        const confirmLoad = await ask(
+          `이전에 작업하던 임시 저장 파일(_staged)이 존재합니다. 이어서 작업하시겠습니까?\n\n임시 파일: ${stagedPath.split(/[/\\]/).pop()}`,
+          { title: '임시 저장 불러오기', kind: 'info', okLabel: '이어서 작업', cancelLabel: '원본 불러오기' }
+        );
+        if (confirmLoad) {
+          shouldApplyStaged = true;
+          addLog("임시 번역 진행 상황(_staged.json)을 이어서 적용합니다.");
+        } else {
+          addLog("원본 파일을 새로 불러옵니다.");
+        }
+      }
+    } catch (err) {
+      console.error("Failed to check staged file", err);
+      addLog("임시 파일 확인 실패: " + String(err));
+    }
+
     originalFilePath = path;
     try {
       const filename = path.split(/[/\\]/).pop() || '';
@@ -194,8 +261,35 @@
         }
         return { ...s, count };
       });
+
+      if (shouldApplyStaged) {
+        try {
+          const jsonContent: string = await invoke('read_staged_json', { path: stagedPath });
+          const stagedData = JSON.parse(jsonContent);
+          
+          for (const s of scripts) {
+            if (stagedData[s.id]) {
+              s.translations = stagedData[s.id];
+            }
+          }
+          addLog("임시 저장된 번역 데이터가 성공적으로 복구되었습니다.");
+        } catch (jsonErr) {
+          console.error("Failed to parse staged JSON", jsonErr);
+          addLog("임시 저장 JSON 분석 실패: " + String(jsonErr));
+          alert("임시 저장 파일 분석 실패: " + jsonErr);
+        }
+      }
+
       selectedSidebarItem = null;
       extractedStrings = [];
+
+      if (!rvdataFiles.includes(path)) {
+        selectedFolder = '';
+        rvdataFiles = [];
+        selectedFileInFolder = '';
+      } else {
+        selectedFileInFolder = path;
+      }
     } catch (e) {
       alert("Failed to load scripts: " + e);
     } finally {
@@ -214,6 +308,37 @@
 
     if (selected && typeof selected === 'string') {
       await loadFile(selected);
+    }
+  }
+
+  async function openFolder() {
+    const selected = await open({
+      directory: true,
+      multiple: false
+    });
+
+    if (selected && typeof selected === 'string') {
+      selectedFolder = selected;
+      try {
+        const files: string[] = await invoke('get_rvdata_in_folder', { folderPath: selectedFolder });
+        rvdataFiles = files;
+        selectedFileInFolder = '';
+        scripts = [];
+        extractedStrings = [];
+        selectedSidebarItem = null;
+        addLog(`폴더 선택 완료. ${files.length}개의 데이터 파일을 찾았습니다.`);
+      } catch (e) {
+        alert("폴더 로드 실패: " + e);
+        addLog("폴더 로드 실패: " + String(e));
+      }
+    }
+  }
+
+  async function handleFolderFileChange(event: Event) {
+    const selectEl = event.target as HTMLSelectElement;
+    const path = selectEl.value;
+    if (path) {
+      await loadFile(path);
     }
   }
 
@@ -298,6 +423,33 @@ Original text: "${item.text}"`;
     } finally {
       extractedStrings = [...extractedStrings];
       saveCurrentTranslations();
+      await saveStagedFile();
+    }
+  }
+
+  async function saveStagedFile() {
+    if (!originalFilePath) return;
+    saveCurrentTranslations();
+
+    const stagedData: Record<number, Record<string, string>> = {};
+    for (const s of scripts) {
+      if (s.translations && Object.keys(s.translations).length > 0) {
+        stagedData[s.id] = s.translations;
+      }
+    }
+
+    const stagedPath = originalFilePath.replace(/\.(rvdata2?)$/i, '_staged.json');
+    const jsonContent = JSON.stringify(stagedData, null, 2);
+
+    try {
+      await invoke('save_staged_json', {
+        path: stagedPath,
+        content: jsonContent
+      });
+      addLog(`[임시 저장] 번역 진행 상황이 저장되었습니다: ${stagedPath.split(/[/\\]/).pop()}`);
+    } catch (e) {
+      console.error("임시 저장 실패", e);
+      addLog("[임시 저장 실패] " + String(e));
     }
   }
 
@@ -305,17 +457,35 @@ Original text: "${item.text}"`;
     const itemsToTranslate = extractedStrings.filter(i => !i.translatedText || i.translatedText === "번역 실패");
     if (itemsToTranslate.length === 0) return;
     isTranslating = true;
+    cancelRequested = false;
     batchTotal = itemsToTranslate.length;
     batchCompleted = 0;
-    for (let item of itemsToTranslate) {
-      if (!item.translatedText || item.translatedText === "번역 실패") {
-        await handleTranslateRow(item);
-        batchCompleted++;
+    try {
+      await invoke('prevent_sleep');
+      for (let item of itemsToTranslate) {
+        if (cancelRequested) {
+          addLog("사용자에 의해 일괄 번역이 중단되었습니다.");
+          break;
+        }
+        if (!item.translatedText || item.translatedText === "번역 실패") {
+          await handleTranslateRow(item);
+          batchCompleted++;
+          
+          if (batchCompleted % 10 === 0) {
+            await saveStagedFile();
+          }
+        }
       }
+      await saveStagedFile();
+    } catch (e) {
+      console.error("Batch translation error", e);
+    } finally {
+      await invoke('allow_sleep');
+      isTranslating = false;
+      batchTotal = 0;
+      batchCompleted = 0;
+      cancelRequested = false;
     }
-    isTranslating = false;
-    batchTotal = 0;
-    batchCompleted = 0;
   }
 
   async function saveFile() {
@@ -442,17 +612,57 @@ Original text: "${item.text}"`;
       ></div>
     </div>
 
-    <div class="header-actions">
-      <button class="btn" on:click={openFile} disabled={isLoading}>
-        {isLoading ? '불러오는 중...' : '데이터 파일 열기 (.rvdata2)'}
-      </button>
+    <div class="header-actions" style="display: flex; align-items: center; gap: 0.8rem;">
+      <div class="dropdown" style="position: relative;">
+        <button class="btn" on:click={() => showOpenMenu = !showOpenMenu} disabled={isLoading}>
+          {isLoading ? '불러오는 중...' : '데이터 열기 ▾'}
+        </button>
+        {#if showOpenMenu}
+          <div class="dropdown-menu glass-panel" style="position: absolute; top: 100%; left: 0; margin-top: 5px; z-index: 100; display: flex; flex-direction: column; gap: 0.25rem; padding: 0.5rem; background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; min-width: 150px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); box-sizing: border-box;">
+            <button class="menu-item" on:click={() => { showOpenMenu = false; openFile(); }}>
+              📄 파일 열기...
+            </button>
+            <button class="menu-item" on:click={() => { showOpenMenu = false; openFolder(); }}>
+              📂 폴더 열기...
+            </button>
+          </div>
+        {/if}
+      </div>
+
+      {#if rvdataFiles.length > 0}
+        <select bind:value={selectedFileInFolder} on:change={handleFolderFileChange} class="api-input" style="width: auto; max-width: 200px; height: 38px; cursor: pointer; padding: 0.55rem 2rem 0.55rem 1rem;">
+          <option value="">-- 파일 선택 --</option>
+          {#each rvdataFiles as file}
+            <option value={file}>{file.split(/[/\\]/).pop()}</option>
+          {/each}
+        </select>
+      {/if}
+
+      {#if selectedFolder}
+        <span class="path-display" title={selectedFolder} style="font-size: 0.85rem; color: #94a3b8; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500;">
+          📂 {selectedFolder.split(/[/\\]/).pop()}
+        </span>
+      {:else}
+        {#if originalFilePath}
+          <span class="path-display" title={originalFilePath} style="font-size: 0.85rem; color: #94a3b8; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500;">
+            📄 {originalFilePath.split(/[/\\]/).pop()}
+          </span>
+        {/if}
+      {/if}
+
       <button class="btn btn-success" on:click={saveFile} disabled={scripts.length === 0}>
         복사본으로 변환/저장
       </button>
     </div>
   </header>
 
-  <main class="main-content">
+  <main class="main-content" style="position: relative;">
+    {#if isLoading}
+      <div class="loading-overlay">
+        <div class="spinner"></div>
+        <p>데이터 파일을 분석하고 불러오는 중입니다...</p>
+      </div>
+    {/if}
     <aside class="sidebar glass-panel">
       <h3 class="sidebar-header">
         <span>대사 리스트</span>
@@ -498,10 +708,14 @@ Original text: "${item.text}"`;
               <span style="color: var(--accent-color); font-weight: bold;">
                 {batchCompleted} / {batchTotal} 완료
               </span>
+              <button class="btn" style="background-color: #ef4444;" on:click={() => cancelRequested = true}>
+                중단하기
+              </button>
+            {:else}
+              <button class="btn" on:click={handleBatchTranslate} disabled={extractedStrings.length === 0}>
+                일괄 번역
+              </button>
             {/if}
-            <button class="btn" on:click={handleBatchTranslate} disabled={isTranslating || extractedStrings.length === 0}>
-              {isTranslating ? '일괄 번역 중...' : '일괄 번역'}
-            </button>
           </div>
         </div>
         
@@ -565,8 +779,20 @@ Original text: "${item.text}"`;
         </div>
         {/if}
       {:else}
-        <div class="empty-state">
-          <p>왼쪽에서 스크립트를 선택해주세요.</p>
+        <div class="empty-state" style="display: flex; flex-direction: column; gap: 0.5rem; text-align: center;">
+          {#if selectedFolder && rvdataFiles.length === 0}
+            <span style="font-size: 2rem;">📂</span>
+            <p style="color: #ef4444; font-weight: 500;">선택한 폴더에 데이터 파일(.rvdata, .rvdata2)이 존재하지 않습니다.</p>
+          {:else if originalFilePath && scripts.length > 0 && scripts.reduce((acc, curr) => acc + (curr.count || 0), 0) === 0}
+            <span style="font-size: 2rem;">🔍</span>
+            <p style="color: #fbbf24; font-weight: 500;">불러온 파일에 번역할 일본어 대사가 존재하지 않습니다.</p>
+          {:else if selectedFolder && !selectedFileInFolder}
+            <span style="font-size: 2rem;">📂</span>
+            <p>상단에서 분석할 데이터 파일을 선택해주세요.</p>
+          {:else}
+            <span style="font-size: 2rem;">📄</span>
+            <p>왼쪽 목록에서 번역할 스크립트/대사 항목을 선택해주세요.</p>
+          {/if}
         </div>
       {/if}
     </section>
@@ -607,6 +833,8 @@ Original text: "${item.text}"`;
     justify-content: space-between;
     align-items: center;
     padding: 0.8rem 1.5rem;
+    position: relative;
+    z-index: 10;
     
     h1 {
       font-size: 1.2rem;
@@ -948,5 +1176,68 @@ Original text: "${item.text}"`;
       background: #475569;
       &:hover { background: #334155; }
     }
+  }
+
+  .loading-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(15, 23, 42, 0.72);
+    backdrop-filter: blur(4px);
+    z-index: 99;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    border-radius: 8px;
+
+    p {
+      color: #94a3b8;
+      font-size: 1rem;
+      font-weight: 500;
+      margin: 0;
+    }
+  }
+
+  .dropdown-menu {
+    animation: fadeIn 0.12s ease-out;
+
+    .menu-item {
+      background: transparent;
+      border: none;
+      color: #f1f5f9;
+      padding: 0.55rem 1rem;
+      text-align: left;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: background 0.2s;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      width: 100%;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+    }
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    border-top-color: var(--accent-color, #3b82f6);
+    animation: spin 1s ease-in-out infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>

@@ -2,6 +2,51 @@ pub mod parser;
 use parser::ScriptEntry;
 use std::path::Path;
 use walkdir::WalkDir;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn SetThreadExecutionState(es_flags: u32) -> u32;
+}
+
+#[cfg(target_os = "windows")]
+const ES_CONTINUOUS: u32 = 0x80000000;
+#[cfg(target_os = "windows")]
+const ES_SYSTEM_REQUIRED: u32 = 0x00000001;
+#[cfg(target_os = "windows")]
+const ES_DISPLAY_REQUIRED: u32 = 0x00000002;
+
+static PREVENT_SLEEP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[tauri::command]
+fn prevent_sleep() {
+    #[cfg(target_os = "windows")]
+    {
+        if PREVENT_SLEEP_COUNT.fetch_add(1, Ordering::SeqCst) == 0 {
+            unsafe {
+                SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
+            }
+            println!("절전 모드 및 디스플레이 오프 방지 활성화");
+        }
+    }
+}
+
+#[tauri::command]
+fn allow_sleep() {
+    #[cfg(target_os = "windows")]
+    {
+        let current = PREVENT_SLEEP_COUNT.load(Ordering::SeqCst);
+        if current > 0 {
+            if PREVENT_SLEEP_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
+                unsafe {
+                    SetThreadExecutionState(ES_CONTINUOUS);
+                }
+                println!("절전 모드 설정 기본값으로 복구");
+            }
+        }
+    }
+}
+
 
 #[tauri::command]
 fn parse_rvdata(path: String) -> Result<Vec<ScriptEntry>, String> {
@@ -207,6 +252,48 @@ fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn check_file_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
+#[tauri::command]
+fn get_rvdata_in_folder(folder_path: String) -> Result<Vec<String>, String> {
+    let mut files = Vec::new();
+    let entries = std::fs::read_dir(&folder_path).map_err(|e| e.to_string())?;
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                let ext = ext.to_lowercase();
+                if ext == "rvdata" || ext == "rvdata2" {
+                    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    if !file_name.contains("_staged") && !file_name.contains("_translated") {
+                        files.push(path.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+#[tauri::command]
+fn save_staged_json(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn read_staged_json(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn is_directory(path: String) -> bool {
+    std::path::Path::new(&path).is_dir()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -220,7 +307,14 @@ pub fn run() {
             read_image_file,
             draw_and_save_image,
             decompile_rgss3a,
-            open_folder
+            open_folder,
+            prevent_sleep,
+            allow_sleep,
+            check_file_exists,
+            get_rvdata_in_folder,
+            save_staged_json,
+            read_staged_json,
+            is_directory
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

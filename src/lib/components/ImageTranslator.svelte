@@ -75,6 +75,10 @@
   }
 
   async function openFolder() {
+    if (isProcessing) {
+      alert("번역 처리 중에는 다른 폴더를 열 수 없습니다.");
+      return;
+    }
     const selected = await open({
       directory: true,
       multiple: false
@@ -96,6 +100,10 @@
   }
 
   export async function handleFileOrFolderSelect(path: string) {
+    if (isProcessing) {
+      alert("번역 처리 중에는 파일을 변경할 수 없습니다.");
+      return;
+    }
     const lowerPath = path.toLowerCase();
     const isImage = lowerPath.endsWith('.png') || lowerPath.endsWith('.jpg') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.bmp');
     
@@ -347,6 +355,10 @@ Output ONLY the JSON array without any markdown or conversational text.`;
       console.error("Failed to load image:", e);
       return "";
     }
+  }
+
+  export function getStatus() {
+    return { isProcessing };
   }
 </script>
 

@@ -193,7 +193,384 @@
     };
   });
 
+  let cacheData = $state<Record<string, string>>({});
+  let glossaryData = $state<Record<string, string>>({});
+  let showGlossaryPanel = $state(false);
+  let newGlossaryJp = $state('');
+  let newGlossaryKo = $state('');
+  let stagedFilesMap = $state<Record<string, 'working' | 'completed' | 'none'>>({});
+
+  async function checkFileCompletion(filePath: string): Promise<boolean> {
+    const filename = filePath.split(/[/\\]/).pop() || '';
+    const isScripts = filename.toLowerCase().startsWith('scripts');
+    const stagedPath = filePath.replace(/\.(rvdata2?)$/i, '_staged.json');
+    
+    try {
+      // 1. 원본 데이터 파싱 및 총 번역 대상 개수 계산
+      const loaded: ScriptEntry[] = await invoke('parse_rvdata', { path: filePath });
+      let totalCount = 0;
+      
+      for (const s of loaded) {
+        if (isScripts) {
+          const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+          const matches = s.code.match(jpRegex);
+          if (matches) totalCount += matches.length;
+        } else {
+          if (s.code) totalCount += 1;
+        }
+      }
+      
+      if (totalCount === 0) return true; // 번역할 문장이 없으면 완료로 취급
+      
+      // 2. staged json 존재 여부 체크 및 번역된 개수 계산
+      const exists: boolean = await invoke('check_file_exists', { path: stagedPath });
+      if (!exists) return false;
+
+      const jsonContent: string = await invoke('read_staged_json', { path: stagedPath });
+      const stagedData = JSON.parse(jsonContent) || {};
+      
+      let completedCount = 0;
+      for (const s of loaded) {
+        const transMap = stagedData[s.id];
+        if (!transMap) continue;
+        
+        if (isScripts) {
+          const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+          let match;
+          while ((match = jpRegex.exec(s.code)) !== null) {
+            const text = match[1] || match[2] || '';
+            const trans = transMap[text];
+            if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+              completedCount++;
+            }
+          }
+        } else {
+          const trans = transMap[s.code];
+          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+            completedCount++;
+          }
+        }
+      }
+      
+      return completedCount >= totalCount;
+    } catch (e) {
+      console.error("checkFileCompletion error", e);
+      return false;
+    }
+  }
+
+  async function updateStagedFilesMap() {
+    if (!selectedFolder || rvdataFiles.length === 0) {
+      stagedFilesMap = {};
+      return;
+    }
+    const newMap: Record<string, 'working' | 'completed' | 'none'> = {};
+    await Promise.all(
+      rvdataFiles.map(async (filePath) => {
+        const stagedPath = filePath.replace(/\.(rvdata2?)$/i, '_staged.json');
+        try {
+          const exists: boolean = await invoke('check_file_exists', { path: stagedPath });
+          if (exists) {
+            newMap[filePath] = 'working';
+          } else {
+            newMap[filePath] = 'none';
+          }
+        } catch (e) {
+          newMap[filePath] = 'none';
+        }
+      })
+    );
+    stagedFilesMap = newMap;
+
+    // 병렬로 완료 상태 체크 및 업데이트
+    await Promise.all(
+      rvdataFiles.map(async (filePath) => {
+        if (stagedFilesMap[filePath] === 'working') {
+          const isCompleted = await checkFileCompletion(filePath);
+          if (isCompleted) {
+            stagedFilesMap[filePath] = 'completed';
+          }
+        }
+      })
+    );
+  }
+
+  async function loadCache() {
+    if (!selectedFolder) {
+      cacheData = {};
+      return;
+    }
+    const cachePath = selectedFolder + '/cache.json';
+    try {
+      const exists: boolean = await invoke('check_file_exists', { path: cachePath });
+      if (exists) {
+        const content: string = await invoke('read_staged_json', { path: cachePath });
+        cacheData = JSON.parse(content) || {};
+        addLog(`번역 캐시 로드 완료: ${Object.keys(cacheData).length}개 문장`);
+      } else {
+        cacheData = {};
+      }
+    } catch (e) {
+      console.error("Failed to load cache", e);
+      addLog("번역 캐시 로드 실패: " + String(e));
+      cacheData = {};
+    }
+  }
+
+  async function saveCache() {
+    if (!selectedFolder) return;
+    const cachePath = selectedFolder + '/cache.json';
+    try {
+      const content = JSON.stringify(cacheData, null, 2);
+      await invoke('save_staged_json', { path: cachePath, content });
+    } catch (e) {
+      console.error("Failed to save cache", e);
+      addLog("번역 캐시 저장 실패: " + String(e));
+    }
+  }
+
+  async function loadGlossary() {
+    if (!selectedFolder) {
+      glossaryData = {};
+      return;
+    }
+    const glossaryPath = selectedFolder + '/glossary.json';
+    try {
+      const exists: boolean = await invoke('check_file_exists', { path: glossaryPath });
+      if (exists) {
+        const content: string = await invoke('read_staged_json', { path: glossaryPath });
+        glossaryData = JSON.parse(content) || {};
+        addLog(`글로서리 로드 완료: ${Object.keys(glossaryData).length}개 단어`);
+      } else {
+        glossaryData = {};
+      }
+    } catch (e) {
+      console.error("Failed to load glossary", e);
+      addLog("글로서리 로드 실패: " + String(e));
+      glossaryData = {};
+    }
+  }
+
+  async function saveGlossary() {
+    if (!selectedFolder) return;
+    const glossaryPath = selectedFolder + '/glossary.json';
+    try {
+      const content = JSON.stringify(glossaryData, null, 2);
+      await invoke('save_staged_json', { path: glossaryPath, content });
+      addLog("글로서리 변경 완료 및 저장");
+    } catch (e) {
+      console.error("Failed to save glossary", e);
+      addLog("글로서리 저장 실패: " + String(e));
+    }
+  }
+
+  async function addGlossaryItem() {
+    if (!selectedFolder) {
+      alert("폴더를 먼저 선택하거나 열어주세요. 글로서리는 작업 폴더 하위에 저장됩니다.");
+      return;
+    }
+    const jp = newGlossaryJp.trim();
+    const ko = newGlossaryKo.trim();
+    if (!jp || !ko) {
+      alert("원문과 번역어 모두 입력해 주세요.");
+      return;
+    }
+    
+    glossaryData[jp] = ko;
+    newGlossaryJp = '';
+    newGlossaryKo = '';
+    await saveGlossary();
+  }
+
+  async function addGlossaryDirect(jp: string, ko: string) {
+    if (!selectedFolder) {
+      alert("폴더를 먼저 선택하거나 열어주세요. 글로서리는 작업 폴더 하위에 저장됩니다.");
+      return;
+    }
+    const cleanJp = jp.trim();
+    const cleanKo = ko.trim();
+    if (!cleanJp || !cleanKo) {
+      alert("원문과 번역어 모두 입력되어 있어야 합니다.");
+      return;
+    }
+    
+    // 이미 존재하는 단어인지 체크
+    if (glossaryData[cleanJp]) {
+      const overwrite = await ask(
+        `이미 용어 사전에 등록된 단어입니다.\n\n• 기존 번역: "${glossaryData[cleanJp]}"\n• 새 번역: "${cleanKo}"\n\n덮어쓰시겠습니까?`,
+        { title: '용어 사전 덮어쓰기', kind: 'warning', okLabel: '예, 덮어쓰기', cancelLabel: '취소' }
+      );
+      if (!overwrite) return;
+    }
+
+    glossaryData[cleanJp] = cleanKo;
+    await saveGlossary();
+    alert(`용어 사전에 등록되었습니다: "${cleanJp}" ➔ "${cleanKo}"`);
+  }
+
+  async function removeGlossaryItem(jp: string) {
+    if (!selectedFolder) return;
+    delete glossaryData[jp];
+    await saveGlossary();
+  }
+
+  async function applyFolderWideReplacement(originalText: string, newTranslatedText: string) {
+    if (!selectedFolder) return;
+    
+    // 현재 화면의 변경 사항을 먼저 인메모리 scripts 배열에 동기화
+    saveCurrentTranslations();
+
+    isLoading = true;
+    let matchCount = 0;
+    let fileCount = 0;
+
+    try {
+      // 1. 현재 메모리 상의 파일에서 매칭 확인
+      let currentMatches = 0;
+      const filename = originalFilePath.split(/[/\\]/).pop() || '';
+      const isScripts = filename.toLowerCase().startsWith('scripts');
+
+      for (const s of scripts) {
+        if (isScripts) {
+          if (s.code && (s.code.includes(`'${originalText}'`) || s.code.includes(`"${originalText}"`))) {
+            currentMatches++;
+          }
+        } else {
+          if (s.code === originalText) {
+            currentMatches++;
+          }
+        }
+      }
+      
+      if (currentMatches > 0) {
+        matchCount += currentMatches;
+        fileCount++;
+      }
+
+      // 2. 폴더 내 다른 모든 _staged.json 파일들에서 매칭 확인
+      if (rvdataFiles.length > 0) {
+        for (const filePath of rvdataFiles) {
+          if (filePath === originalFilePath) continue;
+
+          const stagedPath = filePath.replace(/\.(rvdata2?)$/i, '_staged.json');
+          const exists: boolean = await invoke('check_file_exists', { path: stagedPath });
+          if (exists) {
+            const content: string = await invoke('read_staged_json', { path: stagedPath });
+            const stagedData = JSON.parse(content);
+            
+            let fileMatches = 0;
+            for (const scriptId of Object.keys(stagedData)) {
+              const translations = stagedData[scriptId];
+              if (translations && translations[originalText] !== undefined) {
+                fileMatches++;
+              }
+            }
+            if (fileMatches > 0) {
+              matchCount += fileMatches;
+              fileCount++;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to count occurrences in folder", err);
+    } finally {
+      isLoading = false;
+    }
+
+    const confirmReplace = await ask(
+      `이 원문의 번역을 폴더 내 모든 파일 및 캐시에서 일괄적으로 변경하시겠습니까?\n\n` +
+      `• 발견된 기존 번역/매칭 항목: ${matchCount}개 (대상 파일: ${fileCount}개)\n` +
+      `• 원문: "${originalText}"\n` +
+      `• 변경 번역: "${newTranslatedText}"`,
+      { title: '폴더 내 일괄 변경 확인', kind: 'warning', okLabel: '예, 모두 변경', cancelLabel: '취소' }
+    );
+    
+    if (!confirmReplace) return;
+
+    isLoading = true;
+    try {
+      // 1. 캐시 업데이트
+      cacheData[originalText] = newTranslatedText;
+      await saveCache();
+
+      // 2. 현재 메모리 상의 scripts 업데이트
+      let currentFileUpdates = false;
+      const filename = originalFilePath.split(/[/\\]/).pop() || '';
+      const isScripts = filename.toLowerCase().startsWith('scripts');
+
+      for (const s of scripts) {
+        if (isScripts) {
+          if (s.code && (s.code.includes(`'${originalText}'`) || s.code.includes(`"${originalText}"`))) {
+            if (!s.translations) s.translations = {};
+            s.translations[originalText] = newTranslatedText;
+            currentFileUpdates = true;
+          }
+        } else {
+          if (s.code === originalText) {
+            if (!s.translations) s.translations = {};
+            s.translations[s.code] = newTranslatedText;
+            currentFileUpdates = true;
+          }
+        }
+      }
+
+      if (currentFileUpdates) {
+        extractedStrings = extractedStrings.map(item => {
+          if (item.text === originalText) {
+            return { ...item, translatedText: newTranslatedText };
+          }
+          return item;
+        });
+        saveCurrentTranslations();
+        await saveStagedFile();
+      }
+
+      // 3. 폴더 내 다른 모든 _staged.json 업데이트
+      if (rvdataFiles.length > 0) {
+        for (const filePath of rvdataFiles) {
+          if (filePath === originalFilePath) continue;
+
+          const stagedPath = filePath.replace(/\.(rvdata2?)$/i, '_staged.json');
+          const exists: boolean = await invoke('check_file_exists', { path: stagedPath });
+          if (exists) {
+            const content: string = await invoke('read_staged_json', { path: stagedPath });
+            const stagedData = JSON.parse(content);
+            
+            let fileChanged = false;
+            for (const scriptId of Object.keys(stagedData)) {
+              const translations = stagedData[scriptId];
+              if (translations && translations[originalText] !== undefined) {
+                translations[originalText] = newTranslatedText;
+                fileChanged = true;
+              }
+            }
+
+            if (fileChanged) {
+              await invoke('save_staged_json', {
+                path: stagedPath,
+                content: JSON.stringify(stagedData, null, 2)
+              });
+            }
+          }
+        }
+      }
+      
+      addLog(`[일괄 변경 완료] "${originalText}"의 번역을 모든 파일과 캐시에서 변경했습니다. (총 ${matchCount}개 변경 완료)`);
+      alert(`성공적으로 일괄 변경되었습니다. (총 ${matchCount}개 변경 완료)`);
+    } catch (err) {
+      console.error("Global folder replace failed", err);
+      alert("일괄 변경 중 오류가 발생했습니다: " + err);
+    } finally {
+      isLoading = false;
+    }
+  }
+
   export async function loadFile(path: string) {
+    if (isTranslating || isLoading) {
+      alert("작업 중이거나 로딩 중에는 다른 파일을 불러올 수 없습니다.");
+      return;
+    }
     isLoading = true;
     
     // Check if path is a directory (e.g. dragged folder)
@@ -207,6 +584,9 @@
         scripts = [];
         extractedStrings = [];
         selectedSidebarItem = null;
+        await loadCache();
+        await loadGlossary();
+        await updateStagedFilesMap();
         addLog(`폴더 로드 완료. ${files.length}개의 데이터 파일을 찾았습니다: ${path.split(/[/\\]/).pop()}`);
         isLoading = false;
         return;
@@ -312,6 +692,10 @@
   }
 
   async function openFolder() {
+    if (isTranslating || isLoading) {
+      alert("작업 중이거나 로딩 중에는 다른 폴더를 열 수 없습니다.");
+      return;
+    }
     const selected = await open({
       directory: true,
       multiple: false
@@ -326,6 +710,9 @@
         scripts = [];
         extractedStrings = [];
         selectedSidebarItem = null;
+        await loadCache();
+        await loadGlossary();
+        await updateStagedFilesMap();
         addLog(`폴더 선택 완료. ${files.length}개의 데이터 파일을 찾았습니다.`);
       } catch (e) {
         alert("폴더 로드 실패: " + e);
@@ -346,6 +733,7 @@
     selectedSidebarItem = item;
     const matches: ExtractedString[] = [];
     let idCounter = 0;
+    let cacheApplied = false;
 
     if (!item.isGroup && item.scriptRef) {
       const script = item.scriptRef;
@@ -353,7 +741,11 @@
       let match;
       while ((match = jpRegex.exec(script.code)) !== null) {
           const text = match[1] || match[2] || '';
-          const translatedText = script.translations?.[text] || '';
+          let translatedText = script.translations?.[text] || '';
+          if (!translatedText && cacheData[text]) {
+            translatedText = cacheData[text];
+            cacheApplied = true;
+          }
           matches.push({ 
             id: idCounter++, 
             text: text,
@@ -363,7 +755,11 @@
       }
     } else if (item.isGroup && item.groupEntries) {
       for (const s of item.groupEntries) {
-        const translatedText = s.translations?.[s.code] || '';
+        let translatedText = s.translations?.[s.code] || '';
+        if (!translatedText && cacheData[s.code]) {
+          translatedText = cacheData[s.code];
+          cacheApplied = true;
+        }
         matches.push({
           id: s.id,
           text: s.code,
@@ -373,17 +769,35 @@
       }
     }
     extractedStrings = matches;
+
+    if (cacheApplied) {
+      saveCurrentTranslations();
+      saveStagedFile();
+    }
   }
 
   async function handleTranslateRow(item: ExtractedString) {
     item.translatedText = "번역 중...";
     extractedStrings = [...extractedStrings];
 
+    let glossaryRules = "";
+    if (selectedFolder) {
+      const matchedEntries = Object.entries(glossaryData).filter(([jp, ko]) => {
+        return jp && ko && item.text.includes(jp);
+      });
+      if (matchedEntries.length > 0) {
+        glossaryRules = "\nGlossary (Use these exact translations for the matches):\n" +
+          matchedEntries.map(([jp, ko]) => `- "${jp}" -> "${ko}"`).join("\n") + "\n";
+      }
+    }
+
     const prompt = `Translate the following Japanese game script text into Korean. 
 Rules:
 1. Maintain the meaning and nuance of the original Japanese.
 2. Do not explain the translation, just output the exact Korean translation.
-3. Keep proper nouns and context consistent if possible.
+3. Keep proper nouns and context consistent if possible.${glossaryRules}
+4. Preserve all special characters, brackets (e.g. 「 and 」), ellipses (e.g. …… or ......), and punctuation marks from the original text exactly.
+5. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
 
 Original text: "${item.text}"`;
 
@@ -414,6 +828,11 @@ Original text: "${item.text}"`;
       item.translatedText = cleanText;
       item.errorMsg = undefined;
       addLog(`[번역 완료] 결과: "${cleanText}"`);
+
+      if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패") {
+        cacheData[item.text] = cleanText;
+        await saveCache();
+      }
     } catch(e: any) {
       console.error("Translation Error", e);
       const errMsg = e?.message || JSON.stringify(e) || String(e);
@@ -446,6 +865,8 @@ Original text: "${item.text}"`;
         path: stagedPath,
         content: jsonContent
       });
+      const isCompleted = await checkFileCompletion(originalFilePath);
+      stagedFilesMap[originalFilePath] = isCompleted ? 'completed' : 'working';
       addLog(`[임시 저장] 번역 진행 상황이 저장되었습니다: ${stagedPath.split(/[/\\]/).pop()}`);
     } catch (e) {
       console.error("임시 저장 실패", e);
@@ -460,6 +881,9 @@ Original text: "${item.text}"`;
     cancelRequested = false;
     batchTotal = itemsToTranslate.length;
     batchCompleted = 0;
+
+    let cacheUpdates = false;
+
     try {
       await invoke('prevent_sleep');
       for (let item of itemsToTranslate) {
@@ -467,6 +891,16 @@ Original text: "${item.text}"`;
           addLog("사용자에 의해 일괄 번역이 중단되었습니다.");
           break;
         }
+
+        if (selectedFolder && cacheData[item.text]) {
+          item.translatedText = cacheData[item.text];
+          item.errorMsg = undefined;
+          batchCompleted++;
+          cacheUpdates = true;
+          addLog(`[캐시 적용] 원문: "${item.text}" -> "${cacheData[item.text]}"`);
+          continue;
+        }
+
         if (!item.translatedText || item.translatedText === "번역 실패") {
           await handleTranslateRow(item);
           batchCompleted++;
@@ -475,6 +909,10 @@ Original text: "${item.text}"`;
             await saveStagedFile();
           }
         }
+      }
+      if (cacheUpdates) {
+        extractedStrings = [...extractedStrings];
+        saveCurrentTranslations();
       }
       await saveStagedFile();
     } catch (e) {
@@ -584,6 +1022,20 @@ Original text: "${item.text}"`;
     }
   }
 
+  async function handleManualTranslationChange(item: ExtractedString) {
+    const cleanText = item.translatedText ? item.translatedText.trim() : '';
+    saveCurrentTranslations();
+    
+    if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패") {
+      cacheData[item.text] = cleanText;
+      await saveCache();
+    }
+    await saveStagedFile();
+  }
+
+  export function getStatus() {
+    return { isTranslating, isLoading };
+  }
 </script>
 
 <div class="app-container" class:drag-active={isDragging}>
@@ -597,13 +1049,13 @@ Original text: "${item.text}"`;
     <div class="api-section" style="display: flex; align-items: center; gap: 0.5rem;">
       <label style="font-weight: 500; color: var(--text-secondary); white-space: nowrap; margin: 0;">모델:</label>
       {#if availableModels.length > 0}
-        <select bind:value={ollamaModelName} on:change={saveModelName} class="api-input" style="cursor: pointer;">
+        <select bind:value={ollamaModelName} on:change={saveModelName} class="api-input" style="cursor: pointer;" disabled={isTranslating}>
           {#each availableModels as model}
             <option value={model.name}>Ollama({model.name})</option>
           {/each}
         </select>
       {:else}
-        <input type="text" bind:value={ollamaModelName} on:change={saveModelName} placeholder="Ollama 서버 연결 실패 (수동 입력)" class="api-input" />
+        <input type="text" bind:value={ollamaModelName} on:change={saveModelName} placeholder="Ollama 서버 연결 실패 (수동 입력)" class="api-input" disabled={isTranslating} />
       {/if}
       <div 
         class="status-dot" 
@@ -614,7 +1066,7 @@ Original text: "${item.text}"`;
 
     <div class="header-actions" style="display: flex; align-items: center; gap: 0.8rem;">
       <div class="dropdown" style="position: relative;">
-        <button class="btn" on:click={() => showOpenMenu = !showOpenMenu} disabled={isLoading}>
+        <button class="btn" on:click={() => showOpenMenu = !showOpenMenu} disabled={isLoading || isTranslating}>
           {isLoading ? '불러오는 중...' : '데이터 열기 ▾'}
         </button>
         {#if showOpenMenu}
@@ -630,10 +1082,16 @@ Original text: "${item.text}"`;
       </div>
 
       {#if rvdataFiles.length > 0}
-        <select bind:value={selectedFileInFolder} on:change={handleFolderFileChange} class="api-input" style="width: auto; max-width: 200px; height: 38px; cursor: pointer; padding: 0.55rem 2rem 0.55rem 1rem;">
+        <select bind:value={selectedFileInFolder} on:change={handleFolderFileChange} class="api-input" style="width: auto; max-width: 200px; height: 38px; cursor: pointer; padding: 0.55rem 2rem 0.55rem 1rem;" disabled={isTranslating || isLoading}>
           <option value="">-- 파일 선택 --</option>
           {#each rvdataFiles as file}
-            <option value={file}>{file.split(/[/\\]/).pop()}</option>
+            <option value={file}>
+              {#if stagedFilesMap[file] === 'completed'}
+                ✅ {file.split(/[/\\]/).pop()} (번역 완료)
+              {:else}
+                {stagedFilesMap[file] === 'working' ? '📝 ' : ''}{file.split(/[/\\]/).pop()}{stagedFilesMap[file] === 'working' ? ' (작업 중)' : ''}
+              {/if}
+            </option>
           {/each}
         </select>
       {/if}
@@ -650,7 +1108,7 @@ Original text: "${item.text}"`;
         {/if}
       {/if}
 
-      <button class="btn btn-success" on:click={saveFile} disabled={scripts.length === 0}>
+      <button class="btn btn-success" on:click={saveFile} disabled={scripts.length === 0 || isTranslating || isLoading}>
         복사본으로 변환/저장
       </button>
     </div>
@@ -691,7 +1149,7 @@ Original text: "${item.text}"`;
       </ul>
     </aside>
 
-    <section class="content-area glass-panel scrollbar-hidden">
+    <section class="content-area glass-panel">
       {#if selectedSidebarItem}
         <div class="content-header">
           <h2 style="display: inline-flex; align-items: center; gap: 0.5rem;">
@@ -703,9 +1161,12 @@ Original text: "${item.text}"`;
               </span>
             {/if}
           </h2>
-          <div style="display: flex; align-items: center; gap: 1rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => showGlossaryPanel = !showGlossaryPanel}>
+              {showGlossaryPanel ? '📖 용어 사전 닫기' : '📘 용어 사전 관리'}
+            </button>
             {#if isTranslating && batchTotal > 0}
-              <span style="color: var(--accent-color); font-weight: bold;">
+              <span style="color: var(--accent-color); font-weight: bold; white-space: nowrap; font-size: 0.9rem; margin-right: 0.5rem;">
                 {batchCompleted} / {batchTotal} 완료
               </span>
               <button class="btn" style="background-color: #ef4444;" on:click={() => cancelRequested = true}>
@@ -719,65 +1180,122 @@ Original text: "${item.text}"`;
           </div>
         </div>
         
-        <div class="strings-list">
-          {#each extractedStrings as item}
-            <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
-              <div class="original-column">
-                <p class="original-text">{item.text}</p>
-              </div>
-              <div class="translate-column">
-                <textarea 
-                  class="trans-input" 
-                  bind:value={item.translatedText} 
-                  placeholder="번역된 내용이 여기에 표시됩니다..."
-                  disabled={item.translatedText === "번역 중..."}
-                ></textarea>
-                {#if item.translatedText === "번역 실패" && item.errorMsg}
-                  <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
-                    navigator.clipboard.writeText(item.errorMsg || '');
-                    alert("에러 로그가 클립보드에 복사되었습니다!");
-                  }}>
-                    ⚠️ 에러 발생 (로그 복사)
-                  </div>
-                {/if}
-              </div>
-              <div class="action-column">
-                <button class="btn-small" on:click={() => handleTranslateRow(item)} disabled={item.translatedText === "번역 중..."}>
-                  {item.translatedText === "번역 중..." ? "번역 중" : "번역"}
-                </button>
-              </div>
+        <!-- 용어 사전 패널 (고정 헤더 아래에 고정 배치) -->
+        {#if showGlossaryPanel}
+        <div class="glossary-fixed-container">
+          <div class="glossary-panel glass-panel">
+            <div class="glossary-header">
+              <h3>용어 사전 (Glossary)</h3>
+              <span style="font-size: 0.8rem; color: #94a3b8; margin-left: 0.5rem;">
+                * 등록된 고유명사는 AI 번역 시 일관성 있게 우선 적용됩니다.
+              </span>
             </div>
-          {/each}
-          {#if extractedStrings.length === 0}
-            <p class="empty">이 스크립트에는 추출할 일본어 문자열이 없습니다.</p>
-          {/if}
-        </div>
-
-        <!-- 디버그 패널 토글 영역 -->
-        <div class="debug-toggle-area" style="text-align: right; padding: 0.5rem; margin-top: 1rem;">
-          <button class="btn-small" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8;" on:click={() => showDebugPanel = !showDebugPanel}>
-            {showDebugPanel ? '디버그 로그 숨기기' : '디버그 로그 보기'}
-          </button>
-        </div>
-
-        <!-- 디버그 패널 -->
-        {#if showDebugPanel}
-        <div class="debug-panel glass-panel">
-          <div class="debug-header">
-            <h3>디버그 로그 (Ollama 통신 과정)</h3>
-            <button class="btn-small btn-save" on:click={() => debugLogs = []}>로그 지우기</button>
-          </div>
-          <div class="debug-content">
-            {#if debugLogs.length === 0}
-              <div class="log-entry" style="color: #64748b;">로그가 없습니다.</div>
-            {:else}
-              {#each debugLogs as log}
-                <div class="log-entry">{log}</div>
-              {/each}
-            {/if}
+            <div class="glossary-add-form">
+              <input type="text" bind:value={newGlossaryJp} placeholder="일본어 원문 (예: 薬草)" class="glossary-input" />
+              <span style="color: #64748b;">➔</span>
+              <input type="text" bind:value={newGlossaryKo} placeholder="한국어 번역 (예: 약초)" class="glossary-input" />
+              <button class="btn-small btn-add" on:click={addGlossaryItem}>추가</button>
+            </div>
+            <div class="glossary-content scrollbar-hidden">
+              {#if Object.keys(glossaryData).length === 0}
+                <div class="empty-glossary">등록된 용어가 없습니다. 폴더 단위 작업 시 등록해 보세요.</div>
+              {:else}
+                <table class="glossary-table">
+                  <thead>
+                    <tr>
+                      <th>일본어 원문</th>
+                      <th>한국어 번역</th>
+                      <th style="width: 60px;">관리</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each Object.entries(glossaryData) as [jp, ko]}
+                      <tr>
+                        <td class="jp-val">{jp}</td>
+                        <td class="ko-val">{ko}</td>
+                        <td>
+                          <button class="btn-delete" on:click={() => removeGlossaryItem(jp)}>🗑️</button>
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              {/if}
+            </div>
           </div>
         </div>
         {/if}
+
+        <div class="content-body scrollbar-hidden">
+          <div class="strings-list">
+            {#each extractedStrings as item}
+              <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
+                <div class="original-column">
+                  <p class="original-text">{item.text}</p>
+                </div>
+                <div class="translate-column">
+                  <textarea 
+                    class="trans-input" 
+                    bind:value={item.translatedText} 
+                    placeholder="번역된 내용이 여기에 표시됩니다..."
+                    disabled={item.translatedText === "번역 중..."}
+                    on:blur={() => handleManualTranslationChange(item)}
+                  ></textarea>
+                  {#if item.translatedText === "번역 실패" && item.errorMsg}
+                    <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
+                      navigator.clipboard.writeText(item.errorMsg || '');
+                      alert("에러 로그가 클립보드에 복사되었습니다!");
+                    }}>
+                      ⚠️ 에러 발생 (로그 복사)
+                    </div>
+                  {/if}
+                </div>
+                <div class="action-column" style="display: flex; flex-direction: column; gap: 0.4rem; justify-content: center; width: 100px;">
+                  <button class="btn-small" style="width: 100%;" on:click={() => handleTranslateRow(item)} disabled={item.translatedText === "번역 중..."}>
+                    {item.translatedText === "번역 중..." ? "번역 중" : "번역"}
+                  </button>
+                  {#if selectedFolder && item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+                    <button class="btn-small btn-global-replace" style="width: 100%; background-color: #6366f1;" on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} disabled={isTranslating}>
+                      🌐 일괄 변경
+                    </button>
+                    <button class="btn-small btn-add-glossary" style="width: 100%; background-color: #0d9488;" on:click={() => addGlossaryDirect(item.text, item.translatedText)} disabled={isTranslating}>
+                      📖 용어 등록
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+            {#if extractedStrings.length === 0}
+              <p class="empty">이 스크립트에는 추출할 일본어 문자열이 없습니다.</p>
+            {/if}
+          </div>
+
+          <!-- 디버그 패널 토글 영역 -->
+          <div class="debug-toggle-area" style="text-align: right; padding: 0.5rem; margin-top: 1rem;">
+            <button class="btn-small" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8;" on:click={() => showDebugPanel = !showDebugPanel}>
+              {showDebugPanel ? '디버그 로그 숨기기' : '디버그 로그 보기'}
+            </button>
+          </div>
+
+          <!-- 디버그 패널 -->
+          {#if showDebugPanel}
+          <div class="debug-panel glass-panel">
+            <div class="debug-header">
+              <h3>디버그 로그 (Ollama 통신 과정)</h3>
+              <button class="btn-small btn-save" on:click={() => debugLogs = []}>로그 지우기</button>
+            </div>
+            <div class="debug-content">
+              {#if debugLogs.length === 0}
+                <div class="log-entry" style="color: #64748b;">로그가 없습니다.</div>
+              {:else}
+                {#each debugLogs as log}
+                  <div class="log-entry">{log}</div>
+                {/each}
+              {/if}
+            </div>
+          </div>
+          {/if}
+        </div>
       {:else}
         <div class="empty-state" style="display: flex; flex-direction: column; gap: 0.5rem; text-align: center;">
           {#if selectedFolder && rvdataFiles.length === 0}
@@ -854,6 +1372,10 @@ Original text: "${item.text}"`;
     background: #10b981;
     &:hover {
       background: #059669;
+    }
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
     }
   }
 
@@ -1003,6 +1525,11 @@ Original text: "${item.text}"`;
       background-color: #1e293b;
       color: #f1f5f9;
     }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
   }
 
   .api-input:focus {
@@ -1015,18 +1542,41 @@ Original text: "${item.text}"`;
     flex: 1;
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
-    padding: 1.5rem;
+    overflow: hidden;
+    padding: 0;
     
     .content-header {
+      flex-shrink: 0;
+      padding: 1rem 1.5rem;
+      background: rgba(15, 23, 42, 0.9);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-color);
+      z-index: 10;
+
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 1rem;
       h2 { 
         font-size: 1.2rem; 
         font-weight: 500; 
       }
+    }
+
+    .glossary-fixed-container {
+      flex-shrink: 0;
+      padding: 1rem 1.5rem;
+      background: rgba(15, 23, 42, 0.9);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-color);
+      z-index: 9;
+    }
+
+    .content-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
     }
     
     .empty-state {
@@ -1035,6 +1585,7 @@ Original text: "${item.text}"`;
       align-items: center;
       justify-content: center;
       color: var(--text-secondary);
+      padding: 1.5rem;
     }
 
     .strings-list {
@@ -1170,8 +1721,6 @@ Original text: "${item.text}"`;
       }
     }
 
-
-
     .btn-save {
       background: #475569;
       &:hover { background: #334155; }
@@ -1239,5 +1788,119 @@ Original text: "${item.text}"`;
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  .glossary-panel {
+    flex-shrink: 0;
+    height: 250px;
+    display: flex;
+    flex-direction: column;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    padding: 1rem;
+    gap: 0.75rem;
+
+    .glossary-header {
+      display: flex;
+      align-items: center;
+      h3 { margin: 0; font-size: 1rem; font-weight: 600; color: #f1f5f9; }
+    }
+
+    .glossary-add-form {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-shrink: 0;
+    }
+
+    .glossary-input {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: white;
+      padding: 0.4rem 0.8rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      flex: 1;
+      
+      &:focus {
+        outline: 2px solid var(--accent-color);
+      }
+    }
+
+    .btn-add {
+      background: var(--accent-color);
+      height: 32px;
+      padding: 0 1rem;
+      font-weight: 500;
+      &:hover { background: var(--accent-hover); }
+    }
+
+    .glossary-content {
+      flex: 1;
+      overflow-y: auto;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+
+      .empty-glossary {
+        padding: 2rem;
+        text-align: center;
+        color: #64748b;
+        font-size: 0.85rem;
+      }
+    }
+
+    .glossary-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      text-align: left;
+
+      th, td {
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      th {
+        color: #94a3b8;
+        font-weight: 600;
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .jp-val {
+        color: #94a3b8;
+      }
+
+      .ko-val {
+        color: #34d399;
+      }
+
+      .btn-delete {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        padding: 0.2rem;
+        border-radius: 4px;
+        &:hover {
+          background: rgba(239, 68, 68, 0.15);
+        }
+      }
+    }
+  }
+
+  .btn-global-replace {
+    transition: background-color 0.2s;
+    &:hover {
+      background-color: #4f46e5 !important;
+    }
+  }
+
+  .btn-add-glossary {
+    transition: background-color 0.2s;
+    &:hover {
+      background-color: #0f766e !important;
+    }
   }
 </style>

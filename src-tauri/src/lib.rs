@@ -18,6 +18,19 @@ const ES_DISPLAY_REQUIRED: u32 = 0x00000002;
 
 static PREVENT_SLEEP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(target_os = "macos")]
+use std::process::{Command, Child};
+#[cfg(target_os = "macos")]
+use std::sync::{Mutex, OnceLock};
+
+#[cfg(target_os = "macos")]
+static CAFFEINATE_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn get_caffeinate_mutex() -> &'static Mutex<Option<Child>> {
+    CAFFEINATE_CHILD.get_or_init(|| Mutex::new(None))
+}
+
 #[tauri::command]
 fn prevent_sleep() {
     #[cfg(target_os = "windows")]
@@ -26,7 +39,30 @@ fn prevent_sleep() {
             unsafe {
                 SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
             }
-            println!("절전 모드 및 디스플레이 오프 방지 활성화");
+            println!("절전 모드 및 디스플레이 오프 방지 활성화 (Windows)");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if PREVENT_SLEEP_COUNT.fetch_add(1, Ordering::SeqCst) == 0 {
+            let mutex = get_caffeinate_mutex();
+            let mut guard = mutex.lock().unwrap();
+            if guard.is_none() {
+                let current_pid = std::process::id();
+                match Command::new("caffeinate")
+                    .args(&["-d", "-i", "-w", &current_pid.to_string()])
+                    .spawn() 
+                {
+                    Ok(child) => {
+                        *guard = Some(child);
+                        println!("절전 모드 및 디스플레이 오프 방지 활성화 (macOS - caffeinate pid: {})", current_pid);
+                    }
+                    Err(e) => {
+                        eprintln!("caffeinate 실행 실패: {}", e);
+                    }
+                }
+            }
         }
     }
 }
@@ -41,7 +77,22 @@ fn allow_sleep() {
                 unsafe {
                     SetThreadExecutionState(ES_CONTINUOUS);
                 }
-                println!("절전 모드 설정 기본값으로 복구");
+                println!("절전 모드 설정 기본값으로 복구 (Windows)");
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let current = PREVENT_SLEEP_COUNT.load(Ordering::SeqCst);
+        if current > 0 {
+            if PREVENT_SLEEP_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
+                let mutex = get_caffeinate_mutex();
+                let mut guard = mutex.lock().unwrap();
+                if let Some(mut child) = guard.take() {
+                    let _ = child.kill();
+                    println!("절전 모드 설정 기본값으로 복구 (macOS - caffeinate 종료)");
+                }
             }
         }
     }

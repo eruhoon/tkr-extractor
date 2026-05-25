@@ -44,13 +44,45 @@
     };
   });
 
+  function changeTab(tab: 'decompile' | 'script' | 'image') {
+    if (activeTab === 'decompile' && decompilerRef?.getStatus()?.isRunning) {
+      alert("디컴파일 작업 중에는 다른 탭으로 이동할 수 없습니다.");
+      return;
+    }
+    if (activeTab === 'script') {
+      const status = scriptTranslatorRef?.getStatus();
+      if (status?.isTranslating || status?.isLoading) {
+        alert("번역 작업 중이거나 로딩 중에는 다른 탭으로 이동할 수 없습니다.");
+        return;
+      }
+    }
+    if (activeTab === 'image' && imageTranslatorRef?.getStatus()?.isProcessing) {
+      alert("이미지 번역 작업 중에는 다른 탭으로 이동할 수 없습니다.");
+      return;
+    }
+    activeTab = tab;
+  }
+
   function handleGlobalDrop(path: string) {
     // 현재 활성화된 탭 컴포넌트의 핸들러만 트리거
     if (activeTab === 'decompile' && decompilerRef) {
+      if (decompilerRef.getStatus()?.isRunning) {
+        alert("작업 중에는 새로운 파일을 로드할 수 없습니다.");
+        return;
+      }
       decompilerRef.handleFileSelect(path);
     } else if (activeTab === 'script' && scriptTranslatorRef) {
+      const status = scriptTranslatorRef.getStatus();
+      if (status?.isTranslating || status?.isLoading) {
+        alert("작업 중에는 새로운 파일을 로드할 수 없습니다.");
+        return;
+      }
       scriptTranslatorRef.loadFile(path);
     } else if (activeTab === 'image' && imageTranslatorRef) {
+      if (imageTranslatorRef.getStatus()?.isProcessing) {
+        alert("작업 중에는 새로운 파일을 로드할 수 없습니다.");
+        return;
+      }
       imageTranslatorRef.handleFileOrFolderSelect(path);
     }
   }
@@ -62,21 +94,21 @@
       <button 
         class="tab-btn" 
         class:active={activeTab === 'decompile'} 
-        on:click={() => activeTab = 'decompile'}
+        on:click={() => changeTab('decompile')}
       >
         <span class="icon">📦</span> RGSS3A 디컴파일
       </button>
       <button 
         class="tab-btn" 
         class:active={activeTab === 'script'} 
-        on:click={() => activeTab = 'script'}
+        on:click={() => changeTab('script')}
       >
         <span class="icon">📄</span> 스크립트 번역
       </button>
       <button 
         class="tab-btn" 
         class:active={activeTab === 'image'} 
-        on:click={() => activeTab = 'image'}
+        on:click={() => changeTab('image')}
       >
         <span class="icon">🖼️</span> 이미지 번역
       </button>

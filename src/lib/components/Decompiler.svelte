@@ -43,6 +43,10 @@
   });
 
   export function handleFileSelect(path: string) {
+    if (isRunning) {
+      alert("디컴파일 작업 중에는 파일을 변경할 수 없습니다.");
+      return;
+    }
     const lowerPath = path.toLowerCase();
     if (!lowerPath.endsWith('.rgss3a') && !lowerPath.endsWith('.rgssad') && !lowerPath.endsWith('.rgss2a')) {
       alert("RPG Maker 아카이브 파일(.rgss3a, .rgssad, .rgss2a)만 선택할 수 있습니다.");
@@ -133,6 +137,10 @@
   }
 
   let progressPercent = $derived(totalFiles > 0 ? Math.round((currentCount / totalFiles) * 100) : 0);
+
+  export function getStatus() {
+    return { isRunning };
+  }
 </script>
 
 <div class="app-container" class:drag-active={isDragging}>

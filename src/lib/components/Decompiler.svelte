@@ -135,7 +135,6 @@
   {/if}
 
   <header class="glass-panel header">
-    <h1>RGSS3A 디컴파일러</h1>
     <div class="header-actions">
       <button class="btn btn-success" on:click={startDecompile} disabled={!inputPath || isRunning}>
         {isRunning ? '디컴파일 중...' : '디컴파일 시작'}

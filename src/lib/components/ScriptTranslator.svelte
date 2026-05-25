@@ -3,7 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, TauriEvent } from '@tauri-apps/api/event';
   import { open, save } from '@tauri-apps/plugin-dialog';
-  import { initTokenizer, tokenize, translateSentenceOllama, type Token } from '$lib/translator';
+  import { translateSentenceOllama } from '$lib/translator';
 
   interface ScriptEntry {
     id: number;
@@ -23,6 +23,7 @@
 
   let { isDragging = false } = $props();
 
+  let originalFilePath = $state('');
   let scripts = $state<ScriptEntry[]>([]);
   let selectedSidebarItem = $state<SidebarItem | null>(null);
   let extractedStrings = $state<ExtractedString[]>([]);
@@ -101,10 +102,10 @@
     
     let completed = 0;
     if (isScripts) {
-      const jpRegex = /(['"])(.*?[ぁ-んァ-ヶ一-龠]+.*?)\1/g;
+      const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
       let match;
       while ((match = jpRegex.exec(s.code)) !== null) {
-        const text = match[2];
+        const text = match[1] || match[2] || '';
         const trans = s.translations[text];
         if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
           completed++;
@@ -128,10 +129,12 @@
   let batchTotal = $state(0);
   let batchCompleted = $state(0);
   let isLoading = $state(false);
-  let tokenizerReady = $state(false);
-  let originalFilePath = $state('');
 
   let ollamaModelName = $state('gemma4:e4b');
+  let availableModels = $state<{name: string}[]>([]);
+  let ollamaStatus = $state<'online' | 'offline' | 'checking'>('checking');
+  let translationMode = $state('ollama'); // 'ollama' | 'gemini'
+  let isExtracting = $state(false);
   let showDebugPanel = $state(false);
   let debugLogs = $state<string[]>([]);
 
@@ -142,19 +145,29 @@
 
   function saveModelName() {
     localStorage.setItem('ollamaModelName', ollamaModelName);
-    alert('로컬 모델명이 저장되었습니다.');
     addLog("모델명 변경됨: " + ollamaModelName);
   }
 
   onMount(async () => {
     ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
     addLog("앱 초기화 완료. 모델명: " + ollamaModelName);
+
     try {
-      await initTokenizer();
-      tokenizerReady = true;
+      const res = await fetch("http://127.0.0.1:11434/api/tags");
+      if (res.ok) {
+        const data = await res.json();
+        availableModels = data.models || [];
+        if (availableModels.length > 0 && !localStorage.getItem('ollamaModelName')) {
+          ollamaModelName = availableModels[0].name;
+          localStorage.setItem('ollamaModelName', ollamaModelName);
+        }
+        ollamaStatus = 'online';
+      } else {
+        ollamaStatus = 'offline';
+      }
     } catch (e) {
-      console.error("Tokenizer init failed", e);
-      addLog("토크나이저 초기화 실패: " + String(e));
+      addLog("Ollama 서버 연결 실패: 로컬 서버가 켜져 있는지 확인하세요.");
+      ollamaStatus = 'offline';
     }
   });
 
@@ -173,7 +186,7 @@
       scripts = loaded.map(s => {
         let count = 0;
         if (isScripts) {
-          const jpRegex = /(['"])(.*?[ぁ-んァ-ヶ一-龠]+.*?)\1/g;
+          const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
           const matches = s.code.match(jpRegex);
           count = matches ? matches.length : 0;
         } else {
@@ -211,10 +224,10 @@
 
     if (!item.isGroup && item.scriptRef) {
       const script = item.scriptRef;
-      const jpRegex = /(['"])(.*?[ぁ-んァ-ヶ一-龠]+.*?)\1/g;
+      const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
       let match;
       while ((match = jpRegex.exec(script.code)) !== null) {
-          const text = match[2];
+          const text = match[1] || match[2] || '';
           const translatedText = script.translations?.[text] || '';
           matches.push({ 
             id: idCounter++, 
@@ -268,7 +281,10 @@ Original text: "${item.text}"`;
 
       const result = await response.json();
       const responseText: string = result.response || "";
-      const cleanText = responseText.trim().replace(/^["'](.*)["']$/, '$1');
+      
+      // 원문의 앞쪽 공백(들여쓰기) 보존
+      const leadingSpaces = item.text.match(/^\s*/)?.[0] || '';
+      const cleanText = leadingSpaces + responseText.trim().replace(/^["'](.*)["']$/, '$1');
       
       item.translatedText = cleanText;
       item.errorMsg = undefined;
@@ -408,12 +424,25 @@ Original text: "${item.text}"`;
   {/if}
 
   <header class="glass-panel header">
-    <h1>TKR Extractor (Ollama)</h1>
+    <div class="api-section" style="display: flex; align-items: center; gap: 0.5rem;">
+      <label style="font-weight: 500; color: var(--text-secondary); white-space: nowrap; margin: 0;">모델:</label>
+      {#if availableModels.length > 0}
+        <select bind:value={ollamaModelName} on:change={saveModelName} class="api-input" style="cursor: pointer;">
+          {#each availableModels as model}
+            <option value={model.name}>Ollama({model.name})</option>
+          {/each}
+        </select>
+      {:else}
+        <input type="text" bind:value={ollamaModelName} on:change={saveModelName} placeholder="Ollama 서버 연결 실패 (수동 입력)" class="api-input" />
+      {/if}
+      <div 
+        class="status-dot" 
+        title={ollamaStatus === 'online' ? 'Ollama 서버 정상 연결됨' : (ollamaStatus === 'checking' ? 'Ollama 서버 확인 중...' : 'Ollama 서버 연결 실패 (Ollama 앱이 켜져 있는지 확인하세요)')}
+        style="width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background-color: {ollamaStatus === 'online' ? '#10b981' : (ollamaStatus === 'checking' ? '#f59e0b' : '#ef4444')}; box-shadow: 0 0 5px {ollamaStatus === 'online' ? 'rgba(16,185,129,0.5)' : (ollamaStatus === 'checking' ? 'rgba(245,158,11,0.5)' : 'rgba(239,68,68,0.5)')}; margin-left: 0.2rem;"
+      ></div>
+    </div>
+
     <div class="header-actions">
-      <div class="api-section">
-        <input type="text" bind:value={ollamaModelName} placeholder="Ollama 모델명 입력" class="api-input" />
-        <button class="btn-small btn-save" on:click={saveModelName}>저장</button>
-      </div>
       <button class="btn" on:click={openFile} disabled={isLoading}>
         {isLoading ? '불러오는 중...' : '데이터 파일 열기 (.rvdata2)'}
       </button>
@@ -714,6 +743,46 @@ Original text: "${item.text}"`;
     }
   }
 
+  .api-section {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-right: 1rem;
+  }
+
+  .api-input {
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #f1f5f9;
+    padding: 0.55rem 2rem 0.55rem 1rem;
+    border-radius: 6px;
+    width: 240px;
+    font-size: 0.9rem;
+    height: 38px;
+    box-sizing: border-box;
+    transition: all 0.2s ease;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23cbd5e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+    cursor: pointer;
+
+    option {
+      background-color: #1e293b;
+      color: #f1f5f9;
+    }
+  }
+
+  .api-input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+  }
+
   .content-area {
     flex: 1;
     display: flex;
@@ -873,26 +942,7 @@ Original text: "${item.text}"`;
       }
     }
 
-    .api-section {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin-right: 1rem;
-    }
 
-    .api-input {
-      background: rgba(0, 0, 0, 0.3);
-      border: 1px solid rgba(255,255,255,0.1);
-      color: white;
-      padding: 0.4rem 0.8rem;
-      border-radius: 4px;
-      width: 200px;
-      font-size: 0.85rem;
-    }
-
-    .api-input:focus {
-      outline: 2px solid var(--accent-color);
-    }
 
     .btn-save {
       background: #475569;

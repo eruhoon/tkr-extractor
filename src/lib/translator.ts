@@ -1,42 +1,4 @@
-import kuromoji from 'kuromoji';
 import { invoke } from '@tauri-apps/api/core';
-
-export interface Token {
-    word_id: number;
-    word_type: string;
-    word_position: number;
-    surface_form: string;
-    pos: string;
-    pos_detail_1: string;
-    pos_detail_2: string;
-    pos_detail_3: string;
-    conjugated_type: string;
-    conjugated_form: string;
-    basic_form: string;
-    reading: string;
-    pronunciation: string;
-}
-
-let tokenizer: kuromoji.Tokenizer<Token> | null = null;
-
-export function initTokenizer(): Promise<void> {
-    return new Promise((resolve, reject) => {
-        if (tokenizer) return resolve();
-        kuromoji.builder({ dicPath: '/dict' }).build((err, _tokenizer) => {
-            if (err) {
-                console.error("Failed to build tokenizer", err);
-                return reject(err);
-            }
-            tokenizer = _tokenizer;
-            resolve();
-        });
-    });
-}
-
-export function tokenize(text: string): Token[] {
-    if (!tokenizer) throw new Error("Tokenizer not initialized");
-    return tokenizer.tokenize(text) as Token[];
-}
 
 export async function translateSentenceOllama(sentence: string): Promise<string> {
     try {

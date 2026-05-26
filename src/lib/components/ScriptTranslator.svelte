@@ -1157,10 +1157,10 @@ Original text: "${item.text}"`;
   }
 
   function handleBatchValidate() {
-    for (const item of extractedStrings) {
+    extractedStrings = extractedStrings.map(item => {
       validateRow(item);
-    }
-    extractedStrings = [...extractedStrings];
+      return { ...item };
+    });
     const errorCount = extractedStrings.filter(i => i.validationError).length;
     addLog(`[일괄 검증 완료] 문제 항목 ${errorCount}개 발견`);
   }

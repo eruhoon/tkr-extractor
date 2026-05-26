@@ -490,15 +490,31 @@ fn start_llama_server(app: tauri::AppHandle, model_id: String, custom_path: Opti
         
     let log_file_err = log_file.try_clone().map_err(|e| e.to_string())?;
     
+    let model_path_str = model_path.to_string_lossy().to_string();
+    let mut args = vec![
+        "-m", &model_path_str,
+        "--port", "8080",
+        "-c", "2048",
+    ];
+
+    if cfg!(target_os = "windows") {
+        // Windows (Vulkan 가속용 최적화 옵션)
+        args.push("-ngl");
+        args.push("99");
+        args.push("-fa");
+        args.push("on");
+    } else if cfg!(target_os = "macos") {
+        // macOS (Apple Silicon Metal 가속용 최적화 옵션)
+        args.push("-ngl");
+        args.push("99");
+    } else {
+        // 기타 OS
+        args.push("-ngl");
+        args.push("99");
+    }
+
     let mut child = Command::new(&server_path)
-        .args(&[
-            "-m", model_path.to_str().unwrap(),
-            "--port", "8080",
-            "-c", "2048",
-            "-ngl", "99",
-            "-fa",          // Flash Attention 활성화 (가속 및 메모리 절약)
-            "-cp",          // Cache Prompt 활성화 (프롬프트 KV 캐시 재사용으로 번역 속도 비약적 향상)
-        ])
+        .args(&args)
         .stdout(log_file)
         .stderr(log_file_err)
         .spawn()

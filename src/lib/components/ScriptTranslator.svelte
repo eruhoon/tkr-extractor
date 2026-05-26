@@ -137,7 +137,6 @@
   let selectedFolder = $state('');
   let rvdataFiles = $state<string[]>([]);
   let selectedFileInFolder = $state('');
-  let showOpenMenu = $state(false);
 
   let ollamaModelName = $state('gemma4:e4b');
   let availableModels = $state<{name: string}[]>([]);
@@ -304,13 +303,7 @@
     if (savedModel) selectedModelId = savedModel;
     addLog("앱 초기화 완료. 모델명: " + ollamaModelName);
 
-    const handleOutsideClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (showOpenMenu && !target.closest('.dropdown')) {
-        showOpenMenu = false;
-      }
-    };
-    window.addEventListener('click', handleOutsideClick);
+
 
     const initOllama = async () => {
       try {
@@ -380,7 +373,6 @@
     }).then(fn => { unlistenError = fn; });
 
     return () => {
-      window.removeEventListener('click', handleOutsideClick);
       if (unlistenProgress) unlistenProgress();
       if (unlistenComplete) unlistenComplete();
       if (unlistenError) unlistenError();
@@ -871,19 +863,7 @@
     }
   }
 
-  async function openFile() {
-    const selected = await open({
-      multiple: false,
-      filters: [{
-        name: 'RPG Maker Scripts',
-        extensions: ['rvdata', 'rvdata2']
-      }]
-    });
 
-    if (selected && typeof selected === 'string') {
-      await loadFile(selected);
-    }
-  }
 
   async function openFolder() {
     if (isTranslating || isLoading) {
@@ -1488,21 +1468,9 @@ Original text: "${item.text}"`;
     </div>
 
     <div class="header-actions" style="display: flex; align-items: center; gap: 0.8rem;">
-      <div class="dropdown" style="position: relative;">
-        <button class="btn" on:click={() => showOpenMenu = !showOpenMenu} disabled={isLoading || isTranslating}>
-          {isLoading ? '불러오는 중...' : '데이터 열기 ▾'}
-        </button>
-        {#if showOpenMenu}
-          <div class="dropdown-menu glass-panel" style="position: absolute; top: 100%; left: 0; margin-top: 5px; z-index: 100; display: flex; flex-direction: column; gap: 0.25rem; padding: 0.5rem; background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; min-width: 150px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); box-sizing: border-box;">
-            <button class="menu-item" on:click={() => { showOpenMenu = false; openFile(); }}>
-              📄 파일 열기...
-            </button>
-            <button class="menu-item" on:click={() => { showOpenMenu = false; openFolder(); }}>
-              📂 폴더 열기...
-            </button>
-          </div>
-        {/if}
-      </div>
+      <button class="btn" on:click={openFolder} disabled={isLoading || isTranslating}>
+        {isLoading ? '불러오는 중...' : '📂 폴더 열기'}
+      </button>
 
       {#if rvdataFiles.length > 0}
         <select bind:value={selectedFileInFolder} on:change={handleFolderFileChange} class="api-input" style="width: auto; max-width: 200px; height: 38px; cursor: pointer; padding: 0.55rem 2rem 0.55rem 1rem;" disabled={isTranslating || isLoading}>

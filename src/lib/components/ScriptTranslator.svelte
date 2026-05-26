@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, TauriEvent } from '@tauri-apps/api/event';
-  import { open, save, ask } from '@tauri-apps/plugin-dialog';
+  import { open, save, ask, message } from '@tauri-apps/plugin-dialog';
   import { fetch } from '@tauri-apps/plugin-http';
   import { translateSentenceOllama } from '$lib/translator';
 
@@ -1156,13 +1156,19 @@ Original text: "${item.text}"`;
     item.validationError = undefined;
   }
 
-  function handleBatchValidate() {
+  async function handleBatchValidate() {
     extractedStrings = extractedStrings.map(item => {
       validateRow(item);
       return { ...item };
     });
     const errorCount = extractedStrings.filter(i => i.validationError).length;
     addLog(`[일괄 검증 완료] 문제 항목 ${errorCount}개 발견`);
+
+    if (errorCount === 0) {
+      await message("검증 완료: 발견된 문제 항목이 없습니다! ✅", { title: "검증 완료", kind: "info" });
+    } else {
+      await message(`검증 완료: 총 ${errorCount}개의 문제 항목이 발견되었습니다. ⚠️\n(빨간색 테두리와 경고 아이콘을 확인하세요.)`, { title: "검증 완료", kind: "warning" });
+    }
   }
 
   function cancelBatchTranslation() {

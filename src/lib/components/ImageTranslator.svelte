@@ -58,12 +58,12 @@
   }
 
   async function selectLlamaServerPath() {
+    const isWindows = navigator.userAgent.includes('Windows') || navigator.userAgent.includes('Win32');
     const selected = await open({
       multiple: false,
-      filters: [{
-        name: 'llama-server Executable',
-        extensions: ['exe', 'bin', 'sh']
-      }]
+      filters: isWindows 
+        ? [{ name: 'llama-server Executable', extensions: ['exe', 'bat', 'cmd'] }]
+        : [] // macOS/Linux에서는 확장자가 없는 바이너리 파일을 선택할 수 있도록 필터 해제
     });
     if (selected && typeof selected === 'string') {
       llamaServerPath = selected;

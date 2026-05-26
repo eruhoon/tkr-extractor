@@ -130,6 +130,7 @@
   let isTranslating = $state(false);
   let cancelRequested = $state(false);
   let translationAbortController = $state<AbortController | null>(null);
+  const rowAbortControllers = new Map<number, AbortController>();
   let batchTotal = $state(0);
   let batchCompleted = $state(0);
   let isLoading = $state(false);
@@ -189,9 +190,12 @@
   }
 
   async function selectLlamaServerPath() {
+    const isWindows = navigator.userAgent.includes('Windows') || navigator.userAgent.includes('Win32');
     const selected = await open({
       multiple: false,
-      filters: [{ name: 'llama-server', extensions: ['exe', 'bin', 'sh', ''] }]
+      filters: isWindows 
+        ? [{ name: 'llama-server Executable', extensions: ['exe', 'bat', 'cmd'] }]
+        : [] // macOS/Linux에서는 확장자가 없는 바이너리 파일을 선택할 수 있도록 필터 해제
     });
     if (selected && typeof selected === 'string') {
       llamaServerPath = selected;
@@ -1352,6 +1356,40 @@ Original text: "${item.text}"`;
     await saveStagedFile();
   }
 
+  async function clickTranslateRow(item: ExtractedString) {
+    if (item.translatedText === "번역 중...") {
+      if (isTranslating && translationAbortController) {
+        // 일괄 번역 중인 경우 -> 전체 일괄 번역 취소
+        translationAbortController.abort();
+        cancelRequested = true;
+      } else {
+        // 단일 번역 중인 경우 -> 단일 번역 취소
+        const controller = rowAbortControllers.get(item.id);
+        if (controller) {
+          controller.abort();
+          rowAbortControllers.delete(item.id);
+        }
+      }
+      return;
+    }
+
+    // 번역 시작
+    const controller = new AbortController();
+    rowAbortControllers.set(item.id, controller);
+
+    try {
+      await handleTranslateRow(item, controller.signal);
+    } catch (e: any) {
+      if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
+        console.log(`Row translation aborted for item ${item.id}`);
+      } else {
+        throw e;
+      }
+    } finally {
+      rowAbortControllers.delete(item.id);
+    }
+  }
+
   export function getStatus() {
     return { isTranslating, isLoading };
   }
@@ -1643,16 +1681,36 @@ Original text: "${item.text}"`;
                     </div>
                   {/if}
                 </div>
-                <div class="action-column" style="display: flex; flex-direction: column; gap: 0.4rem; justify-content: center; width: 100px;">
-                  <button class="btn-small" style="width: 100%;" on:click={() => handleTranslateRow(item)} disabled={item.translatedText === "번역 중..."}>
-                    {item.translatedText === "번역 중..." ? "번역 중" : "번역"}
+                <div class="action-column" style="display: flex; flex-direction: row; gap: 0.35rem; align-items: center; justify-content: center; width: 110px;">
+                  <button 
+                    class="btn-small btn-action-icon" 
+                    title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "번역"} 
+                    on:click={() => clickTranslateRow(item)} 
+                  >
+                    {#if item.translatedText === "번역 중..."}
+                      ⏳
+                    {:else}
+                      🤖
+                    {/if}
                   </button>
                   {#if selectedFolder && item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
-                    <button class="btn-small btn-global-replace" style="width: 100%; background-color: #6366f1;" on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} disabled={isTranslating}>
-                      🌐 일괄 변경
+                    <button 
+                      class="btn-small btn-action-icon btn-global-replace" 
+                      style="background-color: #6366f1;" 
+                      title="폴더 내 동일 대사 일괄 변경" 
+                      on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} 
+                      disabled={isTranslating}
+                    >
+                      🌐
                     </button>
-                    <button class="btn-small btn-add-glossary" style="width: 100%; background-color: #0d9488;" on:click={() => addGlossaryDirect(item.text, item.translatedText)} disabled={isTranslating}>
-                      📖 용어 등록
+                    <button 
+                      class="btn-small btn-action-icon btn-add-glossary" 
+                      style="background-color: #0d9488;" 
+                      title="용어 사전에 단어 등록" 
+                      on:click={() => addGlossaryDirect(item.text, item.translatedText)} 
+                      disabled={isTranslating}
+                    >
+                      📖
                     </button>
                   {/if}
                 </div>
@@ -1991,7 +2049,7 @@ Original text: "${item.text}"`;
 
     &:hover .llama-tooltip {
       opacity: 1;
-      transform: translateY(0);
+      transform: translateX(-50%) translateY(0);
       pointer-events: auto;
     }
   }
@@ -2138,7 +2196,7 @@ Original text: "${item.text}"`;
 
     .string-row {
       display: grid;
-      grid-template-columns: 1fr 1fr 100px;
+      grid-template-columns: 1fr 1fr 110px;
       align-items: stretch;
       background: rgba(15, 23, 42, 0.5);
       border: 1px solid var(--border-color);
@@ -2466,6 +2524,23 @@ Original text: "${item.text}"`;
     transition: background-color 0.2s;
     &:hover {
       background-color: #0f766e !important;
+    }
+  }
+
+  .btn-action-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    font-size: 1rem;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+    
+    &:hover:not(:disabled) {
+      transform: scale(1.1);
     }
   }
 </style>

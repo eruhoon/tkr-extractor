@@ -496,6 +496,8 @@ fn start_llama_server(app: tauri::AppHandle, model_id: String, custom_path: Opti
             "--port", "8080",
             "-c", "2048",
             "-ngl", "99",
+            "-fa",          // Flash Attention 활성화 (가속 및 메모리 절약)
+            "-cp",          // Cache Prompt 활성화 (프롬프트 KV 캐시 재사용으로 번역 속도 비약적 향상)
         ])
         .stdout(log_file)
         .stderr(log_file_err)

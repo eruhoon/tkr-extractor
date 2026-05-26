@@ -1,0 +1,59 @@
+Created At: 2026-05-26T09:13:40Z
+Completed At: 2026-05-26T09:13:40Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2195
+Total Bytes: 74801
+Showing lines 240 to 290
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+240:     }
+241:   }
+242: 
+243:   let isServerRunning = false;
+244:   let serverStartedModelId = '';
+245: 
+246:   async function ensureServerRunning(): Promise<boolean> {
+247:     if (!selectedModelId.startsWith('llamacpp:')) {
+248:       return true;
+249:     }
+250: 
+251:     const preset = llamacppPresets.find(p => p.id === selectedModelId);
+252:     if (!preset) return false;
+253: 
+254:     if (isServerRunning && serverStartedModelId === preset.modelName) {
+255:       try {
+256:         const health = await fetch("http://127.0.0.1:8080/health");
+257:         if (health.ok) return true;
+258:       } catch (e) {
+259:         // server offline
+260:       }
+261:     }
+262: 
+263:     addLog(`[llama-server 시작 시도] 모델: ${preset.modelName}`);
+264:     try {
+265:       await invoke('start_llama_server', { modelId: preset.modelName });
+266:       
+267:       // Ping loop
+268:       for (let i = 0; i < 25; i++) {
+269:         await new Promise(resolve => setTimeout(resolve, 200));
+270:         try {
+271:           const health = await fetch("http://127.0.0.1:8080/health");
+272:           if (health.ok) {
+273:             isServerRunning = true;
+274:             serverStartedModelId = preset.modelName;
+275:             addLog("[llama-server 준비 완료]");
+276:             return true;
+277:           }
+278:         } catch (e) {
+279:           // loading
+280:         }
+281:       }
+282:       throw new Error("서버 시작 대기 시간 초과");
+283:     } catch (err: any) {
+284:       addLog(`[llama-server 시작 실패] ${err}`);
+285:       alert(`llama-server 시작 실패! llama-server가 PC에 설치되어 있고 실행 가능한 상태인지 확인하세요.\n오류: ${err}`);
+286:       return false;
+287:     }
+288:   }
+289: 
+290:   onMount(() => {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

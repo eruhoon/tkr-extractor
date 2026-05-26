@@ -1,0 +1,49 @@
+Created At: 2026-05-26T10:21:23Z
+Completed At: 2026-05-26T10:21:23Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2442
+Total Bytes: 85718
+Showing lines 490 to 530
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+490:         }
+491:       })
+492:     );
+493:   }
+494: 
+495:   async function loadCache() {
+496:     if (!selectedFolder) {
+497:       cacheData = {};
+498:       return;
+499:     }
+500:     const cachePath = selectedFolder + '/cache.json';
+501:     try {
+502:       const exists: boolean = await invoke('check_file_exists', { path: cachePath });
+503:       if (exists) {
+504:         const content: string = await invoke('read_staged_json', { path: cachePath });
+505:         cacheData = JSON.parse(content) || {};
+506:         addLog(`번역 캐시 로드 완료: ${Object.keys(cacheData).length}개 문장`);
+507:       } else {
+508:         cacheData = {};
+509:       }
+510:     } catch (e) {
+511:       console.error("Failed to load cache", e);
+512:       addLog("번역 캐시 로드 실패: " + String(e));
+513:       cacheData = {};
+514:     }
+515:   }
+516: 
+517:   async function saveCache() {
+518:     if (!selectedFolder) return;
+519:     const cachePath = selectedFolder + '/cache.json';
+520:     try {
+521:       const content = JSON.stringify(cacheData, null, 2);
+522:       await invoke('save_staged_json', { path: cachePath, content });
+523:     } catch (e) {
+524:       console.error("Failed to save cache", e);
+525:       addLog("번역 캐시 저장 실패: " + String(e));
+526:     }
+527:   }
+528: 
+529:   async function loadGlossary() {
+530:     if (!selectedFolder) {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

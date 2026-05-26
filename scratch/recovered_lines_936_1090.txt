@@ -1,0 +1,92 @@
+Created At: 2026-05-26T08:55:22Z
+Completed At: 2026-05-26T08:55:22Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2074
+Total Bytes: 70471
+Showing lines 936 to 1090
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+936:       }
+937:     }
+938:     extractedStrings = matches;
+939: 
+940:     if (cacheApplied) {
+941:       saveCurrentTranslations();
+942:       saveStagedFile();
+943:     }
+944:   }
+945: 
+946:   async function handleTranslateRow(item: ExtractedString) {
+947:     item.translatedText = "번역 중...";
+948:     extractedStrings = [...extractedStrings];
+949: 
+950:     let glossaryRules = "";
+951:     if (selectedFolder) {
+952:       const matchedEntries = Object.entries(glossaryData).filter(([jp, ko]) => {
+953:         return jp && ko && item.text.includes(jp);
+954:       });
+955:       if (matchedEntries.length > 0) {
+956:         glossaryRules = "\nGlossary (Use these exact translations for the matches):\n" +
+957:           matchedEntries.map(([jp, ko]) => `- "${jp}" -> "${ko}"`).join("\n") + "\n";
+958:       }
+959:     }
+960: 
+961:     const prompt = `Translate the following Japanese game script text into Korean. 
+962: Rules:
+963: 1. Maintain the meaning and nuance of the original Japanese.
+964: 2. Do not explain the translation, just output the exact Korean translation.
+965: 3. Keep proper nouns and context consistent if possible.${glossaryRules}
+966: 4. Preserve all special characters, brackets (e.g. 「 and 」), ellipses (e.g. …… or ......), and punctuation marks from the original text exactly.
+967: 5. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
+968: 
+<truncated 3040 bytes>
+41:     }
+1042:   }
+1043: 
+1044:   async function handleBatchTranslate() {
+1045:     const itemsToTranslate = extractedStrings.filter(i => !i.translatedText || i.translatedText === "번역 실패");
+1046:     if (itemsToTranslate.length === 0) return;
+1047:     isTranslating = true;
+1048:     cancelRequested = false;
+1049:     batchTotal = itemsToTranslate.length;
+1050:     batchCompleted = 0;
+1051: 
+1052:     let cacheUpdates = false;
+1053: 
+1054:     try {
+1055:       await invoke('prevent_sleep');
+1056:       for (let item of itemsToTranslate) {
+1057:         if (cancelRequested) {
+1058:           addLog("사용자에 의해 일괄 번역이 중단되었습니다.");
+1059:           break;
+1060:         }
+1061: 
+1062:         if (selectedFolder && cacheData[item.text]) {
+1063:           item.translatedText = cacheData[item.text];
+1064:           item.errorMsg = undefined;
+1065:           batchCompleted++;
+1066:           cacheUpdates = true;
+1067:           addLog(`[캐시 적용] 원문: "${item.text}" -> "${cacheData[item.text]}"`);
+1068:           continue;
+1069:         }
+1070: 
+1071:         if (!item.translatedText || item.translatedText === "번역 실패") {
+1072:           await handleTranslateRow(item);
+1073:           batchCompleted++;
+1074:           
+1075:           if (batchCompleted % 10 === 0) {
+1076:             await saveStagedFile();
+1077:           }
+1078:         }
+1079:       }
+1080:       if (cacheUpdates) {
+1081:         extractedStrings = [...extractedStrings];
+1082:         saveCurrentTranslations();
+1083:       }
+1084:       await saveStagedFile();
+1085:     } catch (e) {
+1086:       console.error("Batch translation error", e);
+1087:     } finally {
+1088:       await invoke('allow_sleep');
+1089:       isTranslating = false;
+1090:       batchTotal = 0;
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

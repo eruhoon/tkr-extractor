@@ -1,0 +1,59 @@
+Created At: 2026-05-26T09:56:39Z
+Completed At: 2026-05-26T09:56:39Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2303
+Total Bytes: 79823
+Showing lines 1530 to 1580
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1530:                     {/each}
+1531:                   </tbody>
+1532:                 </table>
+1533:               {/if}
+1534:             </div>
+1535:           </div>
+1536:         </div>
+1537:         {/if}
+1538: 
+1539:         <div class="content-body scrollbar-hidden">
+1540:           <div class="strings-list">
+1541:             {#each extractedStrings as item}
+1542:               <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
+1543:                 <div class="original-column">
+1544:                   <p class="original-text">{item.text}</p>
+1545:                 </div>
+1546:                 <div class="translate-column">
+1547:                   <textarea 
+1548:                     class="trans-input" 
+1549:                     bind:value={item.translatedText} 
+1550:                     placeholder="번역된 내용이 여기에 표시됩니다..."
+1551:                     disabled={item.translatedText === "번역 중..."}
+1552:                     on:blur={() => handleManualTranslationChange(item)}
+1553:                   ></textarea>
+1554:                   {#if item.translatedText === "번역 실패" && item.errorMsg}
+1555:                     <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
+1556:                       navigator.clipboard.writeText(item.errorMsg || '');
+1557:                       alert("에러 로그가 클립보드에 복사되었습니다!");
+1558:                     }}>
+1559:                       ⚠️ 에러 발생 (로그 복사)
+1560:                     </div>
+1561:                   {/if}
+1562:                 </div>
+1563:                 <div class="action-column" style="display: flex; flex-direction: column; gap: 0.4rem; justify-content: center; width: 100px;">
+1564:                   <button class="btn-small" style="width: 100%;" on:click={() => handleTranslateRow(item)} disabled={item.translatedText === "번역 중..."}>
+1565:                     {item.translatedText === "번역 중..." ? "번역 중" : "번역"}
+1566:                   </button>
+1567:                   {#if selectedFolder && item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+1568:                     <button class="btn-small btn-global-replace" style="width: 100%; background-color: #6366f1;" on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} disabled={isTranslating}>
+1569:                       🌐 일괄 변경
+1570:                     </button>
+1571:                     <button class="btn-small btn-add-glossary" style="width: 100%; background-color: #0d9488;" on:click={() => addGlossaryDirect(item.text, item.translatedText)} disabled={isTranslating}>
+1572:                       📖 용어 등록
+1573:                     </button>
+1574:                   {/if}
+1575:                 </div>
+1576:               </div>
+1577:             {/each}
+1578:             {#if extractedStrings.length === 0}
+1579:               <p class="empty">이 스크립트에는 추출할 일본어 문자열이 없습니다.</p>
+1580:             {/if}
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

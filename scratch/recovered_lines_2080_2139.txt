@@ -1,0 +1,68 @@
+Created At: 2026-05-26T08:55:54Z
+Completed At: 2026-05-26T08:55:54Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2139
+Total Bytes: 73472
+Showing lines 2080 to 2139
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+2080:         padding: 2rem;
+2081:         text-align: center;
+2082:         color: #64748b;
+2083:         font-size: 0.85rem;
+2084:       }
+2085:     }
+2086: 
+2087:     .glossary-table {
+2088:       width: 100%;
+2089:       border-collapse: collapse;
+2090:       font-size: 0.85rem;
+2091:       text-align: left;
+2092: 
+2093:       th, td {
+2094:         padding: 0.5rem 0.75rem;
+2095:         border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+2096:       }
+2097: 
+2098:       th {
+2099:         color: #94a3b8;
+2100:         font-weight: 600;
+2101:         background: rgba(255, 255, 255, 0.02);
+2102:       }
+2103: 
+2104:       .jp-val {
+2105:         color: #94a3b8;
+2106:       }
+2107: 
+2108:       .ko-val {
+2109:         color: #34d399;
+2110:       }
+2111: 
+2112:       .btn-delete {
+2113:         background: transparent;
+2114:         border: none;
+2115:         cursor: pointer;
+2116:         padding: 0.2rem;
+2117:         border-radius: 4px;
+2118:         &:hover {
+2119:           background: rgba(239, 68, 68, 0.15);
+2120:         }
+2121:       }
+2122:     }
+2123:   }
+2124: 
+2125:   .btn-global-replace {
+2126:     transition: background-color 0.2s;
+2127:     &:hover {
+2128:       background-color: #4f46e5 !important;
+2129:     }
+2130:   }
+2131: 
+2132:   .btn-add-glossary {
+2133:     transition: background-color 0.2s;
+2134:     &:hover {
+2135:       background-color: #0f766e !important;
+2136:     }
+2137:   }
+2138: </style>
+2139: 
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

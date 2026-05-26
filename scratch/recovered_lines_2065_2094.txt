@@ -1,0 +1,38 @@
+Created At: 2026-05-26T10:07:14Z
+Completed At: 2026-05-26T10:07:14Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2396
+Total Bytes: 83576
+Showing lines 2065 to 2094
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+2065:       .translate-column {
+2066:         border-right: 1px solid var(--border-color);
+2067:         display: flex;
+2068:         position: relative;
+2069:         
+2070:         .trans-input {
+2071:           width: 100%;
+2072:           height: 100%;
+2073:           min-height: 80px;
+2074:           background: transparent;
+2075:           border: none;
+2076:           padding: 1rem;
+2077:           color: #34d399; /* Green accent */
+2078:           font-size: 1rem;
+2079:           font-family: inherit;
+2080:           resize: vertical;
+2081:           
+2082:           &:focus {
+2083:             outline: none;
+2084:             background: rgba(255, 255, 255, 0.02);
+2085:           }
+2086:         }
+2087: 
+2088:         .error-indicator {
+2089:           position: absolute;
+2090:           bottom: 4px;
+2091:           right: 8px;
+2092:           background: rgba(239, 68, 68, 0.2);
+2093:           border: 1px solid rgba(239, 68, 68, 0.5);
+2094:           color: #f87171;
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

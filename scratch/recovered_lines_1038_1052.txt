@@ -1,0 +1,23 @@
+Created At: 2026-05-26T09:44:13Z
+Completed At: 2026-05-26T09:44:14Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2240
+Total Bytes: 76982
+Showing lines 1038 to 1052
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1038: 
+1039:       const result = await response.json();
+1040:       const responseText: string = selectedModelId.startsWith('llamacpp:') 
+1041:         ? (result.content || "") 
+1042:         : (result.response || "");
+1043:       
+1044:       // 원문의 앞쪽 공백(들여쓰기) 보존
+1045:       const leadingSpaces = item.text.match(/^\s*/)?.[0] || '';
+1046:       const cleanText = leadingSpaces + responseText.trim().replace(/^["'](.*)["']$/, '$1');
+1047:       
+1048:       item.translatedText = cleanText;
+1049:       item.errorMsg = undefined;
+1050:       addLog(`[번역 완료] 결과: "${cleanText}"`);
+1051: 
+1052:       if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패") {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

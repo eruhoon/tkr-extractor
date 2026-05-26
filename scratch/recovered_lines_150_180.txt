@@ -1,0 +1,39 @@
+Created At: 2026-05-26T09:38:49Z
+Completed At: 2026-05-26T09:38:49Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2223
+Total Bytes: 76418
+Showing lines 150 to 180
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+150:   }
+151: 
+152:   function saveModelName() {
+153:     localStorage.setItem('ollamaModelName', ollamaModelName);
+154:     addLog("모델명 변경됨: " + ollamaModelName);
+155:   }
+156: 
+157:   let selectedModelId = $state('llamacpp:gemma-4-E4B-it');
+158:   let llamaServerPath = $state('');
+159: 
+160:   async function selectLlamaServerPath() {
+161:     const selected = await open({
+162:       multiple: false,
+163:       filters: [{
+164:         name: 'llama-server Executable',
+165:         extensions: ['exe', 'bin', 'sh']
+166:       }]
+167:     });
+168:     if (selected && typeof selected === 'string') {
+169:       llamaServerPath = selected;
+170:       localStorage.setItem('llamaServerPath', selected);
+171:       addLog(`llama-server 경로 설정됨: ${selected}`);
+172:       alert(`llama-server 경로가 설정되었습니다:\n${selected}`);
+173:     }
+174:   }
+175:   
+176:   const llamacppPresets = [
+177:     {
+178:       id: 'llamacpp:gemma-4-E4B-it',
+179:       name: 'llama.cpp (Gemma-4 E4B-it)',
+180:       type: 'llamacpp' as const,
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

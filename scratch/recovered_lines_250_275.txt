@@ -1,0 +1,34 @@
+Created At: 2026-05-26T09:34:37Z
+Completed At: 2026-05-26T09:34:37Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2223
+Total Bytes: 76032
+Showing lines 250 to 275
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+250:           showDownloadModal = true;
+251:         }
+252:       }
+253:     } else {
+254:       const name = selectedModelId.replace('ollama:', '');
+255:       ollamaModelName = name;
+256:       localStorage.setItem('ollamaModelName', name);
+257:     }
+258:   }
+259: 
+260:   let isServerRunning = false;
+261:   let serverStartedModelId = '';
+262: 
+263:   async function ensureServerRunning(): Promise<boolean> {
+264:     if (!selectedModelId.startsWith('llamacpp:')) {
+265:       return true;
+266:     }
+267: 
+268:     const preset = llamacppPresets.find(p => p.id === selectedModelId);
+269:     if (!preset) return false;
+270: 
+271:     if (isServerRunning && serverStartedModelId === preset.modelName) {
+272:       try {
+273:         const health = await fetch("http://127.0.0.1:8080/health");
+274:         if (health.ok) return true;
+275:       } catch (e) {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

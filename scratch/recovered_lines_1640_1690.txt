@@ -1,0 +1,59 @@
+Created At: 2026-05-26T09:57:23Z
+Completed At: 2026-05-26T09:57:23Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2385
+Total Bytes: 82850
+Showing lines 1640 to 1690
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1640:                     }}>
+1641:                       ⚠️ 에러 발생 (로그 복사)
+1642:                     </div>
+1643:                   {/if}
+1644:                 </div>
+1645:                 <div class="action-column" style="display: flex; flex-direction: column; gap: 0.4rem; justify-content: center; width: 100px;">
+1646:                   <button class="btn-small" style="width: 100%;" on:click={() => handleTranslateRow(item)} disabled={item.translatedText === "번역 중..."}>
+1647:                     {item.translatedText === "번역 중..." ? "번역 중" : "번역"}
+1648:                   </button>
+1649:                   {#if selectedFolder && item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+1650:                     <button class="btn-small btn-global-replace" style="width: 100%; background-color: #6366f1;" on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} disabled={isTranslating}>
+1651:                       🌐 일괄 변경
+1652:                     </button>
+1653:                     <button class="btn-small btn-add-glossary" style="width: 100%; background-color: #0d9488;" on:click={() => addGlossaryDirect(item.text, item.translatedText)} disabled={isTranslating}>
+1654:                       📖 용어 등록
+1655:                     </button>
+1656:                   {/if}
+1657:                 </div>
+1658:               </div>
+1659:             {/each}
+1660:             {#if extractedStrings.length === 0}
+1661:               <p class="empty">이 스크립트에는 추출할 일본어 문자열이 없습니다.</p>
+1662:             {/if}
+1663:           </div>
+1664: 
+1665:           <!-- 디버그 패널 토글 영역 -->
+1666:           <div class="debug-toggle-area" style="text-align: right; padding: 0.5rem; margin-top: 1rem;">
+1667:             <button class="btn-small" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8;" on:click={() => showDebugPanel = !showDebugPanel}>
+1668:               {showDebugPanel ? '디버그 로그 숨기기' : '디버그 로그 보기'}
+1669:             </button>
+1670:           </div>
+1671: 
+1672:           <!-- 디버그 패널 -->
+1673:           {#if showDebugPanel}
+1674:           <div class="debug-panel glass-panel">
+1675:             <div class="debug-header">
+1676:               <h3>디버그 로그 (Ollama 통신 과정)</h3>
+1677:               <button class="btn-small btn-save" on:click={() => debugLogs = []}>로그 지우기</button>
+1678:             </div>
+1679:             <div class="debug-content">
+1680:               {#if debugLogs.length === 0}
+1681:                 <div class="log-entry" style="color: #64748b;">로그가 없습니다.</div>
+1682:               {:else}
+1683:                 {#each debugLogs as log}
+1684:                   <div class="log-entry">{log}</div>
+1685:                 {/each}
+1686:               {/if}
+1687:             </div>
+1688:           </div>
+1689:           {/if}
+1690:         </div>
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

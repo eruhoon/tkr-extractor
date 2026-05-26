@@ -1,0 +1,74 @@
+Created At: 2026-05-26T10:18:23Z
+Completed At: 2026-05-26T10:18:23Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2421
+Total Bytes: 84912
+Showing lines 980 to 1105
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+980:     let glossaryRules = "";
+981:     if (selectedFolder) {
+982:       const matchedEntries = Object.entries(glossaryData).filter(([jp, ko]) => {
+983:         return jp && ko && item.text.includes(jp);
+984:       });
+985:       if (matchedEntries.length > 0) {
+986:         glossaryRules = "\nGlossary (Use these exact translations for the matches):\n" +
+987:           matchedEntries.map(([jp, ko]) => `- "${jp}" -> "${ko}"`).join("\n") + "\n";
+988:       }
+989:     }
+990: 
+991:     const systemPrompt = `You are a professional Japanese-to-Korean game translator.
+992: Translate the user's input Japanese text into Korean.
+993: 
+994: You MUST respond ONLY with a valid JSON object matching this schema:
+995: {
+996:   "translation": "the Korean translation string"
+997: }
+998: 
+999: Strict Rules:
+1000: 1. Output ONLY the valid JSON object. Never include any explanations, notes, comments, intro, or markdown formatting (do NOT wrap the JSON in markdown code blocks like \`\`\`json).
+1001: 2. Translate the text fully and naturally into Korean. Do not leave any Japanese characters (Kanji, Hiragana, Katakana) untranslated in the translation.
+1002: 3. Keep all special symbols, game codes, variable markers, brackets (e.g. 「」, 『』, [], {}), punctuation marks, and control characters (like \\n, \\r, \\t, or formatting codes like \\C[x], \\V[x]) exactly as they are in the original text. Do not add spaces around control codes (e.g., keep \\C[4] as is, do not change to \\C [4] or \\ C [ 4 ]).
+1003: 4. If the original text is surrounded by q
+<truncated 2666 bytes>
+
+1066:         addLog(`[JSON 파싱 실패] 원본 콘텐츠: "${rawContent}"`);
+1067:         cleaned = rawContent.trim();
+1068:         if (cleaned.startsWith('{') && cleaned.includes('"translation"')) {
+1069:           const match = cleaned.match(/"translation"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+1070:           if (match) {
+1071:             cleaned = match[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+1072:           }
+1073:         }
+1074:         const prefixRegex = /^(korean\s+translation|translation|korean|한국어\s*번역|한글\s*번역|번역)\s*:\s*/i;
+1075:         cleaned = cleaned.replace(prefixRegex, '');
+1076:         cleaned = cleaned.replace(/^["'](.*)["']$/, '$1');
+1077:       }
+1078: 
+1079:       // 원문의 앞쪽 공백(들여쓰기) 보존
+1080:       const leadingSpaces = item.text.match(/^\s*/)?.[0] || '';
+1081:       const cleanText = leadingSpaces + cleaned;
+1082:       
+1083:       item.translatedText = cleanText;
+1084:       item.errorMsg = undefined;
+1085:       validateRow(item);
+1086:       addLog(`[번역 완료] 결과: "${cleanText}"`);
+1087: 
+1088:       if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패") {
+1089:         cacheData[item.text] = cleanText;
+1090:         await saveCache();
+1091:       }
+1092:     } catch(e: any) {
+1093:       console.error("Translation Error", e);
+1094:       const errMsg = e?.message || JSON.stringify(e) || String(e);
+1095:       item.translatedText = "번역 실패";
+1096:       item.errorMsg = errMsg;
+1097:       addLog(`[번역 실패] 오류: ${errMsg}`);
+1098:     } finally {
+1099:       extractedStrings = [...extractedStrings];
+1100:       saveCurrentTranslations();
+1101:       await saveStagedFile();
+1102:     }
+1103:   }
+1104: 
+1105:   async function saveStagedFile() {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

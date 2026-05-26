@@ -1,0 +1,111 @@
+Created At: 2026-05-26T09:14:59Z
+Completed At: 2026-05-26T09:14:59Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2223
+Total Bytes: 75986
+Showing lines 1 to 200
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: <script lang="ts">
+2:   import { onMount } from 'svelte';
+3:   import { invoke } from '@tauri-apps/api/core';
+4:   import { listen, TauriEvent } from '@tauri-apps/api/event';
+5:   import { open, save, ask } from '@tauri-apps/plugin-dialog';
+6:   import { fetch } from '@tauri-apps/plugin-http';
+7:   import { translateSentenceOllama } from '$lib/translator';
+8: 
+9:   interface ScriptEntry {
+10:     id: number;
+11:     title: string;
+12:     code: string;
+13:     count?: number;
+14:     translations?: { [key: string]: string };
+15:   }
+16: 
+17:   interface ExtractedString {
+18:     id: number;
+19:     text: string;
+20:     translatedText: string;
+21:     originalCodeMatch: string;
+22:     errorMsg?: string;
+23:   }
+24: 
+25:   let { isDragging = false } = $props();
+26: 
+27:   let originalFilePath = $state('');
+28:   let scripts = $state<ScriptEntry[]>([]);
+29:   let selectedSidebarItem = $state<SidebarItem | null>(null);
+30:   let extractedStrings = $state<ExtractedString[]>([]);
+31: 
+32:   let isScriptsFile = $derived(
+33:     originalFilePath.toLowerCase().split(/[/\\]/).pop()?.startsWith('scripts') ?? false
+34:   );
+35: 
+36:   interface SidebarItem {
+37:     id: string | number;
+38:     title: string;
+39:     count: number;
+40:     completedCount: number;
+41:     isGroup: boolean;
+42:     scriptRef?: ScriptEntry;
+43:     groupEntries?: ScriptEntry[];
+44:   }
+45: 
+46:   let sidebarItems = $derived.by<SidebarItem[]>(() => {
+47:     if (!scripts || scripts.length === 0) return [];
+48: 
+49:     if (isScripts
+<truncated 3798 bytes>
+eTimeString();
+149:     debugLogs = [`[${time}] ${msg}`, ...debugLogs];
+150:   }
+151: 
+152:   function saveModelName() {
+153:     localStorage.setItem('ollamaModelName', ollamaModelName);
+154:     addLog("모델명 변경됨: " + ollamaModelName);
+155:   }
+156: 
+157:   let selectedModelId = $state('llamacpp:gemma-4-E4B-it');
+158:   let llamaServerPath = $state('');
+159: 
+160:   async function selectLlamaServerPath() {
+161:     const selected = await open({
+162:       multiple: false,
+163:       filters: [{
+164:         name: 'llama-server Executable',
+165:         extensions: ['exe', 'bin', 'sh']
+166:       }]
+167:     });
+168:     if (selected && typeof selected === 'string') {
+169:       llamaServerPath = selected;
+170:       localStorage.setItem('llamaServerPath', selected);
+171:       addLog(`llama-server 경로 설정됨: ${selected}`);
+172:       alert(`llama-server 경로가 설정되었습니다:\n${selected}`);
+173:     }
+174:   }
+175:   
+176:   const llamacppPresets = [
+177:     {
+178:       id: 'llamacpp:gemma-4-E4B-it',
+179:       name: 'llama.cpp (Gemma-4 E4B-it)',
+180:       type: 'llamacpp' as const,
+181:       modelName: 'gemma-4-E4B-it',
+182:       url: 'https://huggingface.co/lmstudio-community/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf'
+183:     },
+184:     {
+185:       id: 'llamacpp:gemma-4-E2B-it',
+186:       name: 'llama.cpp (Gemma-4 E2B-it)',
+187:       type: 'llamacpp' as const,
+188:       modelName: 'gemma-4-E2B-it',
+189:       url: 'https://huggingface.co/lmstudio-community/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf'
+190:     }
+191:   ];
+192: 
+193:   interface ModelOption {
+194:     id: string;
+195:     name: string;
+196:     type: 'llamacpp' | 'ollama';
+197:     modelName: string;
+198:     url?: string;
+199:   }
+200: 
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

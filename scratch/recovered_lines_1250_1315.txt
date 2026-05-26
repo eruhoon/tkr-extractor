@@ -1,0 +1,74 @@
+Created At: 2026-05-26T10:18:39Z
+Completed At: 2026-05-26T10:18:39Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2421
+Total Bytes: 84912
+Showing lines 1250 to 1315
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1250:       await invoke('prevent_sleep');
+1251: 
+1252:       if (selectedModelId.startsWith('llamacpp:')) {
+1253:         const serverReady = await ensureServerRunning();
+1254:         if (!serverReady) {
+1255:           throw new Error("llama.cpp 서버를 기동하는 데 실패하여 일괄 번역을 중단합니다.");
+1256:         }
+1257:       }
+1258: 
+1259:       for (let item of itemsToTranslate) {
+1260:         if (cancelRequested) {
+1261:           addLog("사용자에 의해 일괄 번역이 중단되었습니다.");
+1262:           break;
+1263:         }
+1264: 
+1265:         if (selectedFolder && cacheData[item.text]) {
+1266:           item.translatedText = cacheData[item.text];
+1267:           item.errorMsg = undefined;
+1268:           batchCompleted++;
+1269:           cacheUpdates = true;
+1270:           addLog(`[캐시 적용] 원문: "${item.text}" -> "${cacheData[item.text]}"`);
+1271:           continue;
+1272:         }
+1273: 
+1274:         if (!item.translatedText || item.translatedText === "번역 실패") {
+1275:           await handleTranslateRow(item);
+1276:           batchCompleted++;
+1277:           
+1278:           if (batchCompleted % 10 === 0) {
+1279:             await saveStagedFile();
+1280:           }
+1281:         }
+1282:       }
+1283:       if (cacheUpdates) {
+1284:         extractedStrings = [...extractedStrings];
+1285:         saveCurrentTranslations();
+1286:       }
+1287:       await saveStagedFile();
+1288:     } catch (e) {
+1289:       console.error("Batch translation error", e);
+1290:     } finally {
+1291:       await invoke('allow_sleep');
+1292:       isTranslating = false;
+1293:       batchTotal = 0;
+1294:       batchCompleted = 0;
+1295:       cancelRequested = false;
+1296: 
+1297:       if (selectedModelId.startsWith('llamacpp:')) {
+1298:         await invoke('stop_llama_server');
+1299:         isServerRunning = false;
+1300:         serverStartedModelId = '';
+1301:         addLog("[llama-server 종료] 일괄 번역 완료에 따른 VRAM 반환");
+1302:       }
+1303:     }
+1304:   }
+1305: 
+1306:   async function saveFile() {
+1307:     if (!originalFilePath) return;
+1308: 
+1309:     // 현재 선택된 스크립트의 번역 상태를 먼저 저장
+1310:     saveCurrentTranslations();
+1311: 
+1312:     const filename = originalFilePath.split(/[/\\]/).pop() || '';
+1313:     const isScripts = filename.toLowerCase().startsWith('scripts');
+1314: 
+1315:     const updatedScripts = scripts.map(s => {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

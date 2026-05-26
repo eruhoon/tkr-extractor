@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
   import { fetch } from '@tauri-apps/plugin-http';
@@ -44,28 +45,231 @@
     debugLogs = [`[${time}] ${msg}`, ...debugLogs];
   }
 
-  onMount(async () => {
-    ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
-    totalImagesProcessed = parseInt(localStorage.getItem('totalImagesProcessed') || '0', 10);
-    addLog("앱 초기화 완료. 물리 렌더링 모드 준비 완료. 모델명: " + ollamaModelName);
+  let selectedModelId = $state('llamacpp:gemma-4-E4B-it');
+  let llamaServerPath = $state('');
+  let isLlamaServerAvailable = $state(false);
 
+  async function updateAvailability() {
     try {
-      const res = await fetch("http://127.0.0.1:11434/api/tags");
-      if (res.ok) {
-        const data = await res.json();
-        availableModels = data.models || [];
-        if (availableModels.length > 0 && !localStorage.getItem('ollamaModelName')) {
-          ollamaModelName = availableModels[0].name;
-          localStorage.setItem('ollamaModelName', ollamaModelName);
+      isLlamaServerAvailable = await invoke('check_llama_server_availability', { customPath: llamaServerPath || null });
+    } catch (e) {
+      isLlamaServerAvailable = false;
+    }
+  }
+
+  async function selectLlamaServerPath() {
+    const selected = await open({
+      multiple: false,
+      filters: [{
+        name: 'llama-server Executable',
+        extensions: ['exe', 'bin', 'sh']
+      }]
+    });
+    if (selected && typeof selected === 'string') {
+      llamaServerPath = selected;
+      localStorage.setItem('llamaServerPath', selected);
+      addLog(`llama-server 경로 설정됨: ${selected}`);
+      alert(`llama-server 경로가 설정되었습니다:\n${selected}`);
+      await updateAvailability();
+    }
+  }
+
+  const llamacppPresets = [
+    {
+      id: 'llamacpp:gemma-4-E4B-it',
+      name: 'llama.cpp (Gemma-4 E4B-it)',
+      type: 'llamacpp' as const,
+      modelName: 'gemma-4-E4B-it',
+      url: 'https://huggingface.co/lmstudio-community/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf'
+    },
+    {
+      id: 'llamacpp:gemma-4-E2B-it',
+      name: 'llama.cpp (Gemma-4 E2B-it)',
+      type: 'llamacpp' as const,
+      modelName: 'gemma-4-E2B-it',
+      url: 'https://huggingface.co/lmstudio-community/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf'
+    }
+  ];
+
+  interface ModelOption {
+    id: string;
+    name: string;
+    type: 'llamacpp' | 'ollama';
+    modelName: string;
+    url?: string;
+  }
+
+  let modelOptions = $derived.by<ModelOption[]>(() => {
+    const list: ModelOption[] = [...llamacppPresets];
+    for (const model of availableModels) {
+      list.push({
+        id: `ollama:${model.name}`,
+        name: `Ollama (${model.name})`,
+        type: 'ollama',
+        modelName: model.name
+      });
+    }
+    return list;
+  });
+
+  let showDownloadModal = $state(false);
+  let downloadingModel: typeof llamacppPresets[0] | null = $state(null);
+  let downloadPercent = $state(0);
+  let downloadTotalBytes = $state(0);
+  let downloadReceivedBytes = $state(0);
+  let isDownloading = $state(false);
+
+  async function triggerDownload() {
+    if (!downloadingModel) return;
+    isDownloading = true;
+    downloadPercent = 0;
+    downloadReceivedBytes = 0;
+    downloadTotalBytes = 0;
+    
+    try {
+      addLog(`[다운로드 시작] 모델 ID: ${downloadingModel.modelName}`);
+      await invoke('download_model', { 
+        modelId: downloadingModel.modelName, 
+        url: downloadingModel.url 
+      });
+    } catch (e) {
+      alert(`다운로드 시작 실패: ${e}`);
+      isDownloading = false;
+    }
+  }
+
+  async function handleModelChange() {
+    localStorage.setItem('selectedModelId', selectedModelId);
+    addLog("모델 선택 변경됨: " + selectedModelId);
+    
+    if (selectedModelId.startsWith('llamacpp:')) {
+      const preset = llamacppPresets.find(p => p.id === selectedModelId);
+      if (preset) {
+        const exists = await invoke('check_model_exists', { modelId: preset.modelName });
+        if (!exists) {
+          downloadingModel = preset;
+          showDownloadModal = true;
         }
-        ollamaStatus = 'online';
-      } else {
+      }
+    } else {
+      const name = selectedModelId.replace('ollama:', '');
+      ollamaModelName = name;
+      localStorage.setItem('ollamaModelName', name);
+    }
+  }
+
+  let isServerRunning = $state(false);
+  let serverStartedModelId = '';
+
+  async function ensureServerRunning(): Promise<boolean> {
+    if (!selectedModelId.startsWith('llamacpp:')) {
+      return true;
+    }
+
+    const preset = llamacppPresets.find(p => p.id === selectedModelId);
+    if (!preset) return false;
+
+    if (isServerRunning && serverStartedModelId === preset.modelName) {
+      try {
+        const health = await fetch("http://127.0.0.1:8080/health");
+        if (health.ok) return true;
+      } catch (e) {
+        // server offline
+      }
+    }
+
+    addLog(`[llama-server 시작 시도] 모델: ${preset.modelName}`);
+    try {
+      await invoke('start_llama_server', { modelId: preset.modelName, customPath: llamaServerPath || null });
+      
+      // Ping loop (150 attempts * 200ms = 30 seconds max wait)
+      for (let i = 0; i < 150; i++) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        try {
+          const health = await fetch("http://127.0.0.1:8080/health");
+          if (health.ok) {
+            isServerRunning = true;
+            serverStartedModelId = preset.modelName;
+            addLog("[llama-server 준비 완료]");
+            return true;
+          }
+        } catch (e) {
+          // loading
+        }
+      }
+      throw new Error("서버 시작 대기 시간 초과");
+    } catch (err: any) {
+      addLog(`[llama-server 시작 실패] ${err}`);
+      alert(`llama-server 시작 실패! llama-server가 PC에 설치되어 있고 실행 가능한 상태인지 확인하세요.\n오류: ${err}`);
+      return false;
+    }
+  }
+
+  onMount(() => {
+    ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
+    selectedModelId = localStorage.getItem('selectedModelId') || 'llamacpp:gemma-4-E4B-it';
+    llamaServerPath = localStorage.getItem('llamaServerPath') || '';
+    totalImagesProcessed = parseInt(localStorage.getItem('totalImagesProcessed') || '0', 10);
+    addLog("앱 초기화 완료. 현재 모델: " + selectedModelId);
+    updateAvailability();
+
+    const initOllama = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:11434/api/tags");
+        if (res.ok) {
+          const data = await res.json();
+          availableModels = data.models || [];
+          ollamaStatus = 'online';
+        } else {
+          ollamaStatus = 'offline';
+        }
+      } catch (e) {
+        addLog("Ollama 서버 연결 실패: 로컬 서버가 켜져 있는지 확인하세요.");
         ollamaStatus = 'offline';
       }
-    } catch (e) {
-      addLog("Ollama 모델 목록을 불러올 수 없습니다. 서버가 켜져 있는지 확인하세요.");
-      ollamaStatus = 'offline';
-    }
+    };
+
+    initOllama();
+
+    let progressUnsub: (() => void) | null = null;
+    let completeUnsub: (() => void) | null = null;
+    let errorUnsub: (() => void) | null = null;
+
+    listen('download-progress', (event: any) => {
+      const payload = event.payload;
+      if (downloadingModel && payload.model_id === downloadingModel.modelName) {
+        downloadPercent = Math.round(payload.percentage);
+        downloadReceivedBytes = payload.downloaded;
+        downloadTotalBytes = payload.total;
+      }
+    }).then(unsub => progressUnsub = unsub);
+
+    listen('download-complete', (event: any) => {
+      const modelId = event.payload;
+      if (downloadingModel && modelId === downloadingModel.modelName) {
+        addLog(`[다운로드 완료] 모델: ${modelId}`);
+        isDownloading = false;
+        showDownloadModal = false;
+        downloadingModel = null;
+        alert("모델 다운로드가 완료되었습니다!");
+      }
+    }).then(unsub => completeUnsub = unsub);
+
+    listen('download-error', (event: any) => {
+      const [modelId, err] = event.payload as [string, string];
+      if (downloadingModel && modelId === downloadingModel.modelName) {
+        addLog(`[다운로드 실패] 모델: ${modelId} | 오류: ${err}`);
+        isDownloading = false;
+        alert(`다운로드 중 오류가 발생했습니다: ${err}`);
+      }
+    }).then(unsub => errorUnsub = unsub);
+
+    return () => {
+      if (progressUnsub) progressUnsub();
+      if (completeUnsub) completeUnsub();
+      if (errorUnsub) errorUnsub();
+      invoke('stop_llama_server');
+    };
   });
 
   function saveModelName() {
@@ -157,8 +361,8 @@
   }
 
   async function processImageOllama(img: ImageEntry) {
-    if (!ollamaModelName) {
-      alert("Ollama 모델 이름을 입력해주세요!");
+    if (!ollamaModelName && !selectedModelId.startsWith('llamacpp:')) {
+      alert("모델을 선택해주세요!");
       return;
     }
 
@@ -189,28 +393,57 @@ Example output:
 CRITICAL: "ko_text" MUST be in Korean (한국어). Do not leave it in Japanese.
 Output ONLY the JSON array without any markdown or conversational text.`;
 
-      addLog(`[${img.name}] 2/3 AI(${ollamaModelName})로 번역 요청...`);
+      const modelLabel = selectedModelId.startsWith('llamacpp:') ? selectedModelId : `Ollama(${ollamaModelName})`;
+      addLog(`[${img.name}] 2/3 AI(${modelLabel})로 번역 요청...`);
       const startTime = performance.now();
+
+      if (selectedModelId.startsWith('llamacpp:')) {
+        const serverReady = await ensureServerRunning();
+        if (!serverReady) {
+          throw new Error("llama.cpp 서버를 가동하는 데 실패했습니다.");
+        }
+      }
       
-      const response = await fetch("http://127.0.0.1:11434/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: ollamaModelName,
-          prompt: prompt,
-          images: [base64Data],
-          stream: false,
-          format: "json"
-        })
-      });
+      let response;
+      if (selectedModelId.startsWith('llamacpp:')) {
+        response = await fetch("http://127.0.0.1:8080/completion", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: prompt,
+            image_data: [
+              {
+                data: base64Data,
+                id: 1
+              }
+            ],
+            stream: false
+          })
+        });
+      } else {
+        response = await fetch("http://127.0.0.1:11434/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: ollamaModelName,
+            prompt: prompt,
+            images: [base64Data],
+            stream: false,
+            format: "json"
+          })
+        });
+      }
 
       if (!response.ok) {
-        throw new Error(`Ollama 통신 실패: ${response.status} ${response.statusText}`);
+        throw new Error(`API 통신 실패: ${response.status} ${response.statusText}`);
       }
 
       const result = await response.json();
       const endTime = performance.now();
-      const responseText = result.response || "";
+      const responseText = selectedModelId.startsWith('llamacpp:')
+        ? (result.content || "")
+        : (result.response || "");
+
       addLog(`[${img.name}] 응답 수신 완료 (${((endTime-startTime)/1000).toFixed(1)}초). 원시 응답 텍스트:\n${responseText}`);
       
       let parsedRegions: OcrTextRegion[] = [];
@@ -249,13 +482,12 @@ Output ONLY the JSON array without any markdown or conversational text.`;
       } catch(parseErr) {
         console.error("JSON parsing error", responseText);
         addLog(`[${img.name}] JSON 파싱 실패! 에러: ` + String(parseErr));
-        throw new Error("Ollama 모델이 올바른 JSON 규격(box_2d 포함)을 반환하지 않았습니다.\n\n[모델 원시 응답]\n" + responseText);
+        throw new Error("AI 모델이 올바른 JSON 규격(box_2d 포함)을 반환하지 않았습니다.\n\n[모델 원시 응답]\n" + responseText);
       }
 
       img.regions = parsedRegions;
 
       addLog(`[${img.name}] 3/3 번역 결과를 물리 이미지로 합성 및 저장하는 중...`);
-      // 이미지 합성 및 저장 로직 호출 (Rust 백엔드)
       const dotIndex = img.path.lastIndexOf('.');
       const outputExt = dotIndex > -1 ? img.path.substring(dotIndex) : '.png';
       const outputBase = dotIndex > -1 ? img.path.substring(0, dotIndex) : img.path;
@@ -268,7 +500,6 @@ Output ONLY the JSON array without any markdown or conversational text.`;
       });
 
       img.translatedPath = outputPath;
-      // UI 갱신을 위해 썸네일 캐시에 미리 빈 값 등록 (강제 리로드 효과)
       delete imageCache[outputPath];
 
       img.status = 'done';
@@ -298,6 +529,14 @@ Output ONLY the JSON array without any markdown or conversational text.`;
 
     try {
       await invoke('prevent_sleep');
+
+      if (selectedModelId.startsWith('llamacpp:')) {
+        const serverReady = await ensureServerRunning();
+        if (!serverReady) {
+          throw new Error("llama.cpp 서버를 준비하는 데 실패하여 일괄 번역을 중단합니다.");
+        }
+      }
+
       for (const img of pendingImages) {
         if (cancelRequested) {
           addLog("사용자에 의해 이미지 일괄 번역이 중단되었습니다.");
@@ -319,6 +558,13 @@ Output ONLY the JSON array without any markdown or conversational text.`;
         alert("이미지 일괄 번역이 완료되었습니다!");
       }
       cancelRequested = false;
+
+      if (selectedModelId.startsWith('llamacpp:')) {
+        await invoke('stop_llama_server');
+        isServerRunning = false;
+        serverStartedModelId = '';
+        addLog("[llama-server 종료] 이미지 일괄 번역 완료에 따른 VRAM 반환");
+      }
     }
   }
 
@@ -384,19 +630,31 @@ Output ONLY the JSON array without any markdown or conversational text.`;
     
     <div class="api-section" style="display: flex; align-items: center; gap: 0.5rem;">
       <label style="font-weight: 500; color: var(--text-secondary); white-space: nowrap; margin: 0;">모델:</label>
-      {#if availableModels.length > 0}
-        <select bind:value={ollamaModelName} on:change={saveModelName} class="api-input" style="cursor: pointer;">
-          {#each availableModels as model}
-            <option value={model.name}>Ollama({model.name})</option>
-          {/each}
-        </select>
-      {:else}
-        <input type="text" bind:value={ollamaModelName} on:change={saveModelName} placeholder="Ollama 서버 연결 실패 (수동 입력)" class="api-input" />
+      <select bind:value={selectedModelId} on:change={handleModelChange} class="api-input" style="cursor: pointer;" disabled={isProcessing}>
+        {#each modelOptions as opt}
+          <option value={opt.id}>{opt.name}</option>
+        {/each}
+      </select>
+      {#if selectedModelId.startsWith('llamacpp:')}
+        <button 
+          class="btn-icon" 
+          title={llamaServerPath ? `llama-server.exe 경로 설정됨:\n${llamaServerPath}` : "llama-server.exe 경로 설정 (미설정 시 기본 executable 자동 감지)"}
+          on:click={selectLlamaServerPath}
+          style={`background: ${llamaServerPath ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.08)'}; border: 1px solid ${llamaServerPath ? 'rgba(16, 185, 129, 0.4)' : 'rgba(255, 255, 255, 0.15)'}; color: ${llamaServerPath ? '#10b981' : '#cbd5e1'}; width: 32px; height: 32px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 0.9rem;`}
+        >
+          ⚙️
+        </button>
       {/if}
       <div 
         class="status-dot" 
-        title={ollamaStatus === 'online' ? 'Ollama 서버 정상 연결됨' : (ollamaStatus === 'checking' ? 'Ollama 서버 확인 중...' : 'Ollama 서버 연결 실패 (Ollama 앱이 켜져 있는지 확인하세요)')}
-        style="width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background-color: {ollamaStatus === 'online' ? '#10b981' : (ollamaStatus === 'checking' ? '#f59e0b' : '#ef4444')}; box-shadow: 0 0 5px {ollamaStatus === 'online' ? 'rgba(16,185,129,0.5)' : (ollamaStatus === 'checking' ? 'rgba(245,158,11,0.5)' : 'rgba(239,68,68,0.5)')}; margin-left: 0.2rem;"
+        title={selectedModelId.startsWith('llamacpp:') 
+          ? (isServerRunning ? 'llama-server 실행 중' : (isLlamaServerAvailable ? 'llama.cpp 사용 가능' : 'llama-server.exe를 찾을 수 없음 (⚙️ 설정 필요)')) 
+          : (ollamaStatus === 'online' ? 'Ollama 서버 정상 연결됨' : (ollamaStatus === 'checking' ? 'Ollama 서버 확인 중...' : 'Ollama 서버 연결 실패'))}
+        style={`width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background-color: ${selectedModelId.startsWith('llamacpp:') 
+          ? (isServerRunning || isLlamaServerAvailable ? '#10b981' : '#ef4444') 
+          : (ollamaStatus === 'online' ? '#10b981' : (ollamaStatus === 'checking' ? '#f59e0b' : '#ef4444'))}; box-shadow: 0 0 5px ${selectedModelId.startsWith('llamacpp:') 
+          ? (isServerRunning || isLlamaServerAvailable ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.5)') 
+          : (ollamaStatus === 'online' ? 'rgba(16,185,129,0.5)' : (ollamaStatus === 'checking' ? 'rgba(245,158,11,0.5)' : 'rgba(239,68,68,0.5)'))}; margin-left: 0.2rem;`}
       ></div>
     </div>
 
@@ -542,6 +800,36 @@ Output ONLY the JSON array without any markdown or conversational text.`;
     </section>
   </div>
 </div>
+
+{#if showDownloadModal}
+  <div class="download-modal-overlay">
+    <div class="download-modal glass-panel">
+      <h3>모델 다운로드 안내</h3>
+      <p style="margin: 0.5rem 0; font-size: 0.95rem; line-height: 1.5; color: #cbd5e1;">
+        선택하신 <strong>{downloadingModel?.name}</strong> 모델이 로컬 디바이스에 없습니다.<br>
+        번역기 사용을 위해 GGUF 모델 파일을 다운로드해야 합니다.
+      </p>
+      <p style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 1rem;">
+        다운로드 주소: {downloadingModel?.url}
+      </p>
+      
+      {#if isDownloading}
+        <div class="progress-container">
+          <div class="progress-bar" style="width: {downloadPercent}%"></div>
+          <span class="progress-label">{downloadPercent}% ({ (downloadReceivedBytes / 1024 / 1024).toFixed(1) } MB / { downloadTotalBytes > 0 ? (downloadTotalBytes / 1024 / 1024).toFixed(1) + ' MB' : '계산중...' })</span>
+        </div>
+        <p style="font-size: 0.85rem; color: #fbbf24; margin-top: 0.5rem; text-align: center;">
+          모델 다운로드 중입니다. 잠시만 기다려 주세요... (창을 닫지 마세요)
+        </p>
+      {:else}
+        <div class="modal-actions" style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
+          <button class="btn btn-save" on:click={() => { showDownloadModal = false; downloadingModel = null; selectedModelId = 'ollama:' + ollamaModelName; }}>취소</button>
+          <button class="btn btn-success" on:click={triggerDownload}>다운로드 시작</button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <style lang="scss">
   .image-translator-container {
@@ -990,5 +1278,60 @@ Output ONLY the JSON array without any markdown or conversational text.`;
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+  .download-modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(8px);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .download-modal {
+    width: 480px;
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.5);
+
+    h3 {
+      margin: 0;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: white;
+    }
+  }
+
+  .progress-container {
+    width: 100%;
+    height: 24px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #6366f1);
+    transition: width 0.1s ease;
+  }
+
+  .progress-label {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.8);
   }
 </style>

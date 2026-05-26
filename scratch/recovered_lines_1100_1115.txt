@@ -1,0 +1,24 @@
+Created At: 2026-05-26T09:48:08Z
+Completed At: 2026-05-26T09:48:09Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2248
+Total Bytes: 77436
+Showing lines 1100 to 1115
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1100:       console.error("임시 저장 실패", e);
+1101:       addLog("[임시 저장 실패] " + String(e));
+1102:     }
+1103:   }
+1104: 
+1105:   async function handleBatchTranslate() {
+1106:     const itemsToTranslate = extractedStrings.filter(i => !i.translatedText || i.translatedText === "번역 실패");
+1107:     if (itemsToTranslate.length === 0) return;
+1108:     isTranslating = true;
+1109:     cancelRequested = false;
+1110:     batchTotal = itemsToTranslate.length;
+1111:     batchCompleted = 0;
+1112: 
+1113:     let cacheUpdates = false;
+1114: 
+1115:     try {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

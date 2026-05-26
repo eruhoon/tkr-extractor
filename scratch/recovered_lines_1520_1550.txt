@@ -1,0 +1,39 @@
+Created At: 2026-05-26T09:57:08Z
+Completed At: 2026-05-26T09:57:08Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2382
+Total Bytes: 82572
+Showing lines 1520 to 1550
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1520:             on:click={() => {
+1521:               if (isTranslating) return;
+1522:               saveCurrentTranslations();
+1523:               selectSidebarItem(item);
+1524:             }}
+1525:           >
+1526:             <span class="id">{idx}</span>
+1527:             <span class="title">{item.title || 'Untitled'}</span>
+1528:             {#if item.count !== undefined && item.count > 0}
+1529:               <span class="count-badge" class:fully-translated={item.completedCount === item.count}>
+1530:                 {item.completedCount}/{item.count}
+1531:               </span>
+1532:             {/if}
+1533:           </li>
+1534:         {/each}
+1535:       </ul>
+1536:     </aside>
+1537: 
+1538:     <section class="content-area glass-panel">
+1539:       {#if selectedSidebarItem}
+1540:         <div class="content-header">
+1541:           <h2 style="display: inline-flex; align-items: center; gap: 0.5rem;">
+1542:             {selectedSidebarItem.title}
+1543:             {#if extractedStrings.length > 0}
+1544:               {@const completed = extractedStrings.filter(i => i.translatedText && i.translatedText !== "번역 중..." && i.translatedText !== "번역 실패" && i.translatedText.trim() !== "").length}
+1545:               <span class="count-badge" class:fully-translated={completed === extractedStrings.length}>
+1546:                 {completed}/{extractedStrings.length}
+1547:               </span>
+1548:             {/if}
+1549:           </h2>
+1550:           <div style="display: flex; align-items: center; gap: 0.5rem;">
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

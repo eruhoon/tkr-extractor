@@ -1,0 +1,39 @@
+Created At: 2026-05-26T09:54:38Z
+Completed At: 2026-05-26T09:54:38Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2287
+Total Bytes: 79283
+Showing lines 1050 to 1080
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1050:       const responseText: string = selectedModelId.startsWith('llamacpp:') 
+1051:         ? (result.choices?.[0]?.message?.content || "") 
+1052:         : (result.message?.content || "");
+1053:       
+1054:       // AI 응답 텍스트 정제 (Korean translation: "..." 등 군더더기 텍스트 제거)
+1055:       let cleaned = responseText.trim();
+1056:       const prefixRegex = /^(korean\s+translation|translation|korean|한국어\s*번역|한글\s*번역|번역)\s*:\s*/i;
+1057:       cleaned = cleaned.replace(prefixRegex, '');
+1058:       cleaned = cleaned.replace(/^["'](.*)["']$/, '$1');
+1059:       cleaned = cleaned.trim().replace(prefixRegex, '');
+1060:       cleaned = cleaned.replace(/^["'](.*)["']$/, '$1');
+1061: 
+1062:       // 원문의 앞쪽 공백(들여쓰기) 보존
+1063:       const leadingSpaces = item.text.match(/^\s*/)?.[0] || '';
+1064:       const cleanText = leadingSpaces + cleaned.trim();
+1065:       
+1066:       item.translatedText = cleanText;
+1067:       item.errorMsg = undefined;
+1068:       addLog(`[번역 완료] 결과: "${cleanText}"`);
+1069: 
+1070:       if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패") {
+1071:         cacheData[item.text] = cleanText;
+1072:         await saveCache();
+1073:       }
+1074:     } catch(e: any) {
+1075:       console.error("Translation Error", e);
+1076:       const errMsg = e?.message || JSON.stringify(e) || String(e);
+1077:       item.translatedText = "번역 실패";
+1078:       item.errorMsg = errMsg;
+1079:       addLog(`[번역 실패] 오류: ${errMsg}`);
+1080:     } finally {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

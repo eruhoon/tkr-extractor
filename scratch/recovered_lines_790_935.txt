@@ -1,0 +1,95 @@
+Created At: 2026-05-26T08:55:19Z
+Completed At: 2026-05-26T08:55:19Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2074
+Total Bytes: 70471
+Showing lines 790 to 935
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+790:       console.error("Failed to check staged file", err);
+791:       addLog("임시 파일 확인 실패: " + String(err));
+792:     }
+793: 
+794:     originalFilePath = path;
+795:     try {
+796:       const filename = path.split(/[/\\]/).pop() || '';
+797:       const isScripts = filename.toLowerCase().startsWith('scripts');
+798:       
+799:       const loaded: ScriptEntry[] = await invoke('parse_rvdata', { path });
+800:       scripts = loaded.map(s => {
+801:         let count = 0;
+802:         if (isScripts) {
+803:           const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+804:           const matches = s.code.match(jpRegex);
+805:           count = matches ? matches.length : 0;
+806:         } else {
+807:           count = s.code ? 1 : 0;
+808:         }
+809:         return { ...s, count };
+810:       });
+811: 
+812:       if (shouldApplyStaged) {
+813:         try {
+814:           const jsonContent: string = await invoke('read_staged_json', { path: stagedPath });
+815:           const stagedData = JSON.parse(jsonContent);
+816:           
+817:           for (const s of scripts) {
+818:             if (stagedData[s.id]) {
+819:               s.translations = stagedData[s.id];
+820:             }
+821:           }
+822:           addLog("임시 저장된 번역 데이터가 성공적으로 복구되었습니다.");
+823:         } catch (jsonErr) {
+824:           console.error("Failed to parse staged JSON", jsonErr);
+825:           addLog("임시 저장 JSON 분석 실패: " + 
+<truncated 2062 bytes>
+ing(e));
+887:       }
+888:     }
+889:   }
+890: 
+891:   async function handleFolderFileChange(event: Event) {
+892:     const selectEl = event.target as HTMLSelectElement;
+893:     const path = selectEl.value;
+894:     if (path) {
+895:       await loadFile(path);
+896:     }
+897:   }
+898: 
+899:   function selectSidebarItem(item: SidebarItem) {
+900:     selectedSidebarItem = item;
+901:     const matches: ExtractedString[] = [];
+902:     let idCounter = 0;
+903:     let cacheApplied = false;
+904: 
+905:     if (!item.isGroup && item.scriptRef) {
+906:       const script = item.scriptRef;
+907:       const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+908:       let match;
+909:       while ((match = jpRegex.exec(script.code)) !== null) {
+910:           const text = match[1] || match[2] || '';
+911:           let translatedText = script.translations?.[text] || '';
+912:           if (!translatedText && cacheData[text]) {
+913:             translatedText = cacheData[text];
+914:             cacheApplied = true;
+915:           }
+916:           matches.push({ 
+917:             id: idCounter++, 
+918:             text: text,
+919:             originalCodeMatch: match[0],
+920:             translatedText: translatedText
+921:           });
+922:       }
+923:     } else if (item.isGroup && item.groupEntries) {
+924:       for (const s of item.groupEntries) {
+925:         let translatedText = s.translations?.[s.code] || '';
+926:         if (!translatedText && cacheData[s.code]) {
+927:           translatedText = cacheData[s.code];
+928:           cacheApplied = true;
+929:         }
+930:         matches.push({
+931:           id: s.id,
+932:           text: s.code,
+933:           originalCodeMatch: s.code,
+934:           translatedText: translatedText
+935:         });
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

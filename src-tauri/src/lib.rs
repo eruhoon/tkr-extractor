@@ -18,10 +18,10 @@ const ES_DISPLAY_REQUIRED: u32 = 0x00000002;
 
 static PREVENT_SLEEP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(target_os = "macos")]
 use std::process::{Command, Child};
-#[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
+use std::io::Write;
+use tauri::Manager;
 
 #[cfg(target_os = "macos")]
 static CAFFEINATE_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
@@ -29,6 +29,12 @@ static CAFFEINATE_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 #[cfg(target_os = "macos")]
 fn get_caffeinate_mutex() -> &'static Mutex<Option<Child>> {
     CAFFEINATE_CHILD.get_or_init(|| Mutex::new(None))
+}
+
+static LLAMA_SERVER_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+
+fn get_llama_server_mutex() -> &'static Mutex<Option<Child>> {
+    LLAMA_SERVER_CHILD.get_or_init(|| Mutex::new(None))
 }
 
 #[tauri::command]
@@ -345,12 +351,248 @@ fn is_directory(path: String) -> bool {
     std::path::Path::new(&path).is_dir()
 }
 
+#[derive(Clone, serde::Serialize)]
+struct DownloadProgressPayload {
+    model_id: String,
+    downloaded: u64,
+    total: u64,
+    percentage: f64,
+}
+
+#[tauri::command]
+fn check_model_exists(app: tauri::AppHandle, model_id: String) -> bool {
+    if let Ok(app_dir) = app.path().app_data_dir() {
+        let model_path = app_dir.join("models").join(format!("{}-Q4_K_M.gguf", model_id));
+        model_path.exists()
+    } else {
+        false
+    }
+}
+
+#[tauri::command]
+fn download_model(app: tauri::AppHandle, model_id: String, url: String) -> Result<(), String> {
+    std::thread::spawn(move || {
+        let result = (|| -> Result<(), String> {
+            let client = reqwest::blocking::Client::builder()
+                .build()
+                .map_err(|e| e.to_string())?;
+            let mut response = client.get(&url)
+                .send()
+                .map_err(|e| e.to_string())?;
+            
+            if !response.status().is_success() {
+                return Err(format!("HTTP error: {}", response.status()));
+            }
+
+            let total_size = response.content_length().unwrap_or(0);
+            
+            let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+            let models_dir = app_dir.join("models");
+            std::fs::create_dir_all(&models_dir).map_err(|e| e.to_string())?;
+            
+            let filename = format!("{}-Q4_K_M.gguf", model_id);
+            let dest_path = models_dir.join(&filename);
+            let tmp_path = models_dir.join(format!("{}.tmp", filename));
+            
+            let mut dest_file = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
+            
+            let mut buffer = vec![0; 8192];
+            let mut downloaded = 0;
+            
+            loop {
+                use std::io::Read;
+                let bytes_read = response.read(&mut buffer).map_err(|e| e.to_string())?;
+                if bytes_read == 0 {
+                    break;
+                }
+                dest_file.write_all(&buffer[..bytes_read]).map_err(|e| e.to_string())?;
+                downloaded += bytes_read as u64;
+                
+                let percentage = if total_size > 0 {
+                    (downloaded as f64 / total_size as f64) * 100.0
+                } else {
+                    0.0
+                };
+                
+                let _ = app.emit("download-progress", DownloadProgressPayload {
+                    model_id: model_id.clone(),
+                    downloaded,
+                    total: total_size,
+                    percentage,
+                });
+            }
+            
+            // Rename tmp file to final file
+            std::fs::rename(tmp_path, dest_path).map_err(|e| e.to_string())?;
+            
+            let _ = app.emit("download-complete", model_id.clone());
+            Ok(())
+        })();
+        
+        if let Err(err) = result {
+            let _ = app.emit("download-error", (model_id, err));
+        }
+    });
+    
+    Ok(())
+}
+
+#[tauri::command]
+fn start_llama_server(app: tauri::AppHandle, model_id: String, custom_path: Option<String>) -> Result<(), String> {
+    let mutex = get_llama_server_mutex();
+    let mut guard = mutex.lock().unwrap();
+    
+    // Kill existing child process if running
+    if let Some(mut child) = guard.take() {
+        let _ = child.kill();
+    }
+    
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let model_path = app_dir.join("models").join(format!("{}-Q4_K_M.gguf", model_id));
+    
+    if !model_path.exists() {
+        return Err("Model file does not exist. Please download it first.".to_string());
+    }
+    
+    let exe_name = if cfg!(target_os = "windows") { "llama-server.exe" } else { "llama-server" };
+    
+    let mut server_path = custom_path.unwrap_or_default();
+    if server_path.is_empty() {
+        // 1. 앱 실행 파일과 같은 폴더에서 찾기
+        if let Ok(current_exe) = std::env::current_exe() {
+            if let Some(parent) = current_exe.parent() {
+                let local_path = parent.join(exe_name);
+                if local_path.exists() {
+                    server_path = local_path.to_string_lossy().to_string();
+                }
+            }
+        }
+    }
+    
+    // 2. 지정되지 않았거나 같은 폴더에 없으면 시스템 PATH에서 찾기
+    if server_path.is_empty() {
+        server_path = exe_name.to_string();
+    }
+    
+    println!("Starting llama-server: {} -m {:?}", server_path, model_path);
+
+    // 로그 파일 설정
+    let log_dir = app_dir.join("logs");
+    std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+    let log_path = log_dir.join("llama_server.log");
+    
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
+        .map_err(|e| format!("Failed to open log file: {}", e))?;
+        
+    let log_file_err = log_file.try_clone().map_err(|e| e.to_string())?;
+    
+    let mut child = Command::new(&server_path)
+        .args(&[
+            "-m", model_path.to_str().unwrap(),
+            "--port", "8080",
+            "-c", "2048",
+            "-ngl", "99",
+        ])
+        .stdout(log_file)
+        .stderr(log_file_err)
+        .spawn()
+        .map_err(|e| format!("Failed to start llama-server. Error: {}", e))?;
+        
+    // 1초간 대기하여 바로 종료(크래시)되는지 확인
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            let log_content = std::fs::read_to_string(&log_path)
+                .unwrap_or_else(|_| "Failed to read llama_server.log".to_string());
+            
+            // Limit log lines to avoid massive errors
+            let log_lines: Vec<&str> = log_content.lines().collect();
+            let last_lines = if log_lines.len() > 30 {
+                log_lines[log_lines.len() - 30..].join("\n")
+            } else {
+                log_content.clone()
+            };
+            
+            return Err(format!(
+                "llama-server exited immediately with status: {}.\nLog output:\n{}",
+                status, last_lines
+            ));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            return Err(format!("Error checking child process status: {}", e));
+        }
+    }
+        
+    *guard = Some(child);
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_llama_server() {
+    let mutex = get_llama_server_mutex();
+    let mut guard = mutex.lock().unwrap();
+    if let Some(mut child) = guard.take() {
+        let _ = child.kill();
+        println!("llama-server stopped.");
+    }
+}
+
+#[tauri::command]
+fn check_llama_server_availability(custom_path: Option<String>) -> bool {
+    let exe_name = if cfg!(target_os = "windows") { "llama-server.exe" } else { "llama-server" };
+    
+    let server_path = custom_path.unwrap_or_default();
+    if server_path.is_empty() {
+        if let Ok(current_exe) = std::env::current_exe() {
+            if let Some(parent) = current_exe.parent() {
+                let local_path = parent.join(exe_name);
+                if local_path.exists() {
+                    return true;
+                }
+            }
+        }
+    } else {
+        return std::path::Path::new(&server_path).exists();
+    }
+    
+    if let Ok(path_var) = std::env::var("PATH") {
+        for path in std::env::split_paths(&path_var) {
+            let exe_path = path.join(exe_name);
+            if exe_path.exists() {
+                return true;
+            }
+        }
+    }
+    
+    false
+}
+
+#[tauri::command]
+fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(), String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let model_path = app_dir.join("models").join(format!("{}-Q4_K_M.gguf", model_id));
+    if model_path.exists() {
+        std::fs::remove_file(model_path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                stop_llama_server();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             parse_rvdata, 
             save_rvdata, 
@@ -365,7 +607,13 @@ pub fn run() {
             get_rvdata_in_folder,
             save_staged_json,
             read_staged_json,
-            is_directory
+            is_directory,
+            check_model_exists,
+            download_model,
+            start_llama_server,
+            stop_llama_server,
+            delete_model,
+            check_llama_server_availability
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

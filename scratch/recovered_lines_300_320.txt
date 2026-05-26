@@ -1,0 +1,29 @@
+Created At: 2026-05-26T09:13:58Z
+Completed At: 2026-05-26T09:13:58Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2212
+Total Bytes: 75397
+Showing lines 300 to 320
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+300:     } catch (err: any) {
+301:       addLog(`[llama-server 시작 실패] ${err}`);
+302:       alert(`llama-server 시작 실패! llama-server가 PC에 설치되어 있고 실행 가능한 상태인지 확인하세요.\n오류: ${err}`);
+303:       return false;
+304:     }
+305:   }
+306: 
+307:   onMount(() => {
+308:     ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
+309:     selectedModelId = localStorage.getItem('selectedModelId') || 'llamacpp:gemma-4-E4B-it';
+310:     addLog("앱 초기화 완료. 현재 모델: " + selectedModelId);
+311: 
+312:     const handleOutsideClick = (e: MouseEvent) => {
+313:       const target = e.target as HTMLElement;
+314:       if (showOpenMenu && !target.closest('.dropdown')) {
+315:         showOpenMenu = false;
+316:       }
+317:     };
+318:     window.addEventListener('click', handleOutsideClick);
+319: 
+320:     const initOllama = async () => {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

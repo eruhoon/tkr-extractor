@@ -1,0 +1,39 @@
+Created At: 2026-05-26T08:55:49Z
+Completed At: 2026-05-26T08:55:49Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2109
+Total Bytes: 71790
+Showing lines 1500 to 1530
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1500:         </div>
+1501:       {:else}
+1502:         <div class="empty-state" style="display: flex; flex-direction: column; gap: 0.5rem; text-align: center;">
+1503:           {#if selectedFolder && rvdataFiles.length === 0}
+1504:             <span style="font-size: 2rem;">📂</span>
+1505:             <p style="color: #ef4444; font-weight: 500;">선택한 폴더에 데이터 파일(.rvdata, .rvdata2)이 존재하지 않습니다.</p>
+1506:           {:else if originalFilePath && scripts.length > 0 && scripts.reduce((acc, curr) => acc + (curr.count || 0), 0) === 0}
+1507:             <span style="font-size: 2rem;">🔍</span>
+1508:             <p style="color: #fbbf24; font-weight: 500;">불러온 파일에 번역할 일본어 대사가 존재하지 않습니다.</p>
+1509:           {:else if selectedFolder && !selectedFileInFolder}
+1510:             <span style="font-size: 2rem;">📂</span>
+1511:             <p>상단에서 분석할 데이터 파일을 선택해주세요.</p>
+1512:           {:else}
+1513:             <span style="font-size: 2rem;">📄</span>
+1514:             <p>왼쪽 목록에서 번역할 스크립트/대사 항목을 선택해주세요.</p>
+1515:           {/if}
+1516:         </div>
+1517:       {/if}
+1518:     </section>
+1519:   </main>
+1520: </div>
+1521: 
+1522: <style lang="scss">
+1523:   .app-container {
+1524:     display: flex;
+1525:     flex-direction: column;
+1526:     height: 100%;
+1527:     position: relative;
+1528:     gap: 1rem;
+1529:   }
+1530: 
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

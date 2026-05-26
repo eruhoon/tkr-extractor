@@ -1,0 +1,39 @@
+Created At: 2026-05-26T09:48:20Z
+Completed At: 2026-05-26T09:48:20Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2274
+Total Bytes: 78332
+Showing lines 1440 to 1470
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1440:               <span class="count-badge" class:fully-translated={completed === extractedStrings.length}>
+1441:                 {completed}/{extractedStrings.length}
+1442:               </span>
+1443:             {/if}
+1444:           </h2>
+1445:           <div style="display: flex; align-items: center; gap: 0.5rem;">
+1446:             <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => showGlossaryPanel = !showGlossaryPanel}>
+1447:               {showGlossaryPanel ? '📖 용어 사전 닫기' : '📘 용어 사전 관리'}
+1448:             </button>
+1449:             {#if isTranslating && batchTotal > 0}
+1450:               <span style="color: var(--accent-color); font-weight: bold; white-space: nowrap; font-size: 0.9rem; margin-right: 0.5rem;">
+1451:                 {batchCompleted} / {batchTotal} 완료
+1452:               </span>
+1453:               <button class="btn" style="background-color: #ef4444;" on:click={() => cancelRequested = true}>
+1454:                 중단하기
+1455:               </button>
+1456:             {:else}
+1457:               <button class="btn" on:click={handleBatchTranslate} disabled={extractedStrings.length === 0}>
+1458:                 일괄 번역
+1459:               </button>
+1460:             {/if}
+1461:           </div>
+1462:         </div>
+1463:         
+1464:         <!-- 용어 사전 패널 (고정 헤더 아래에 고정 배치) -->
+1465:         {#if showGlossaryPanel}
+1466:         <div class="glossary-fixed-container">
+1467:           <div class="glossary-panel glass-panel">
+1468:             <div class="glossary-header">
+1469:               <h3>용어 사전 (Glossary)</h3>
+1470:               <span style="font-size: 0.8rem; color: #94a3b8; margin-left: 0.5rem;">
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

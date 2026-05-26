@@ -1,0 +1,29 @@
+Created At: 2026-05-26T10:21:42Z
+Completed At: 2026-05-26T10:21:42Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2442
+Total Bytes: 85718
+Showing lines 1255 to 1275
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1255:     } else {
+1256:       alert("검증 완료: 모든 번역이 정상적입니다! (오류 없음)");
+1257:     }
+1258:   }
+1259: 
+1260:   async function handleBatchTranslate() {
+1261:     const itemsToTranslate = extractedStrings.filter(i => !i.translatedText || i.translatedText === "번역 실패");
+1262:     if (itemsToTranslate.length === 0) return;
+1263:     isTranslating = true;
+1264:     cancelRequested = false;
+1265:     batchTotal = itemsToTranslate.length;
+1266:     batchCompleted = 0;
+1267: 
+1268:     let cacheUpdates = false;
+1269: 
+1270:     try {
+1271:       await invoke('prevent_sleep');
+1272: 
+1273:       if (selectedModelId.startsWith('llamacpp:')) {
+1274:         const serverReady = await ensureServerRunning();
+1275:         if (!serverReady) {
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

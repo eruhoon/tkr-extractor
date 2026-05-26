@@ -1,0 +1,97 @@
+Created At: 2026-05-26T10:30:19Z
+Completed At: 2026-05-26T10:30:19Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2486
+Total Bytes: 87282
+Showing lines 1200 to 1350
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1200:       saveCurrentTranslations();
+1201:       try {
+1202:         await saveStagedFile();
+1203:       } catch (e) {
+1204:         // ignore staged save errors
+1205:       }
+1206:       
+1207:       addLog("현재 뷰의 모든 번역 데이터가 초기화되었습니다.");
+1208:       alert  async function handleBatchTranslate() {
+1209:     const itemsToTranslate = extractedStrings.filter(i => 
+1210:       !i.translatedText || 
+1211:       i.translatedText === "번역 실패" || 
+1212:       i.validationError !== undefined
+1213:     );
+1214:     if (itemsToTranslate.length === 0) return;
+1215:     isTranslating = true;
+1216:     cancelRequested = false;
+1217:     batchTotal = itemsToTranslate.length;
+1218:     batchCompleted = 0;
+1219: 
+1220:     let cacheUpdates = false;
+1221: 
+1222:     try {
+1223:       await invoke('prevent_sleep');
+1224: 
+1225:       if (selectedModelId.startsWith('llamacpp:')) {
+1226:         const serverReady = await ensureServerRunning();
+1227:         if (!serverReady) {
+1228:           throw new Error("llama.cpp 서버를 가동하는 데 실패하여 일괄 번역을 중단합니다.");
+1229:         }
+1230:       }
+1231: 
+1232:       for (let item of itemsToTranslate) {
+1233:         if (cancelRequested) {
+1234:           addLog("사용자에 의해 일괄 번역이 중단되었습니다.");
+1235:           break;
+1236:         }
+1237: 
+1238:         const hasValidationError = item.validationError !== undefined;
+1239: 
+1240:         if (selectedFolder && cacheData[item.text]
+<truncated 2628 bytes>
+hTranslate() {
+1305:     const itemsToTranslate = extractedStrings.filter(i => !i.translatedText || i.translatedText === "번역 실패");
+1306:     if (itemsToTranslate.length === 0) return;
+1307:     isTranslating = true;
+1308:     cancelRequested = false;
+1309:     batchTotal = itemsToTranslate.length;
+1310:     batchCompleted = 0;
+1311: 
+1312:     let cacheUpdates = false;
+1313: 
+1314:     try {
+1315:       await invoke('prevent_sleep');
+1316: 
+1317:       if (selectedModelId.startsWith('llamacpp:')) {
+1318:         const serverReady = await ensureServerRunning();
+1319:         if (!serverReady) {
+1320:           throw new Error("llama.cpp 서버를 기동하는 데 실패하여 일괄 번역을 중단합니다.");
+1321:         }
+1322:       }
+1323: 
+1324:       for (let item of itemsToTranslate) {
+1325:         if (cancelRequested) {
+1326:           addLog("사용자에 의해 일괄 번역이 중단되었습니다.");
+1327:           break;
+1328:         }
+1329: 
+1330:         if (selectedFolder && cacheData[item.text]) {
+1331:           item.translatedText = cacheData[item.text];
+1332:           item.errorMsg = undefined;
+1333:           batchCompleted++;
+1334:           cacheUpdates = true;
+1335:           addLog(`[캐시 적용] 원문: "${item.text}" -> "${cacheData[item.text]}"`);
+1336:           continue;
+1337:         }
+1338: 
+1339:         if (!item.translatedText || item.translatedText === "번역 실패") {
+1340:           await handleTranslateRow(item);
+1341:           batchCompleted++;
+1342:           
+1343:           if (batchCompleted % 10 === 0) {
+1344:             await saveStagedFile();
+1345:           }
+1346:         }
+1347:       }
+1348:       if (cacheUpdates) {
+1349:         extractedStrings = [...extractedStrings];
+1350:         saveCurrentTranslations();
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

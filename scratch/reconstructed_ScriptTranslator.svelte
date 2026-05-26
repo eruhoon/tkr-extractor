@@ -20,7 +20,6 @@
     translatedText: string;
     originalCodeMatch: string;
     errorMsg?: string;
-    validationError?: string;
   }
 
   let { isDragging = false } = $props();
@@ -129,7 +128,6 @@
   }
   let isTranslating = $state(false);
   let cancelRequested = $state(false);
-  let translationAbortController = $state<AbortController | null>(null);
   let batchTotal = $state(0);
   let batchCompleted = $state(0);
   let isLoading = $state(false);
@@ -146,30 +144,6 @@
   let showDebugPanel = $state(false);
   let debugLogs = $state<string[]>([]);
 
-  // llama.cpp 관련
-  const llamacppPresets = [
-    { 
-      id: 'llamacpp:gemma-4-E4B-it', 
-      name: 'llama.cpp (Gemma-4 E4B-it)', 
-      modelName: 'gemma-4-E4B-it',
-      downloadUrl: 'https://huggingface.co/bartowski/google_gemma-4-E4B-it-GGUF/resolve/main/google_gemma-4-E4B-it-Q4_K_M.gguf'
-    },
-    { 
-      id: 'llamacpp:gemma-4-E2B-it', 
-      name: 'llama.cpp (Gemma-4 E2B-it)', 
-      modelName: 'gemma-4-E2B-it',
-      downloadUrl: 'https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF/resolve/main/google_gemma-4-E2B-it-Q4_K_M.gguf'
-    },
-  ];
-  let selectedModelId = $state('ollama:' + 'gemma4:e4b');
-  let llamaServerPath = $state('');
-  let isLlamaServerAvailable = $state(false);
-  let llamaServerRunning = $state(false);
-  // 'idle' | 'starting' | 'downloading' | 'ready' | 'error'
-  let llamaServerStatus = $state<'idle' | 'starting' | 'downloading' | 'ready' | 'error'>('idle');
-  let llamaCurrentModelId = $state(''); // 현재 서버에 로드된 모델 ID
-  let downloadProgress = $state(0); // 다운로드 진행률
-
   function addLog(msg: string) {
     const time = new Date().toLocaleTimeString();
     debugLogs = [`[${time}] ${msg}`, ...debugLogs];
@@ -180,124 +154,8 @@
     addLog("모델명 변경됨: " + ollamaModelName);
   }
 
-  async function updateLlamaAvailability() {
-    try {
-      isLlamaServerAvailable = await invoke<boolean>('check_llama_server_availability', { customPath: llamaServerPath || null });
-    } catch {
-      isLlamaServerAvailable = false;
-    }
-  }
-
-  async function selectLlamaServerPath() {
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: 'llama-server', extensions: ['exe', 'bin', 'sh', ''] }]
-    });
-    if (selected && typeof selected === 'string') {
-      llamaServerPath = selected;
-      localStorage.setItem('llamaServerPath', selected);
-      addLog(`llama-server 경로 설정됨: ${selected}`);
-      await updateLlamaAvailability();
-    }
-  }
-
-  /** /health 폴링 — 최대 waitSec초 대기, ready 시 true 반환 */
-  async function waitForLlamaReady(waitSec = 120): Promise<boolean> {
-    const deadline = Date.now() + waitSec * 1000;
-    while (Date.now() < deadline) {
-      try {
-        const res = await fetch('http://127.0.0.1:8080/health');
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          if (data.status === 'ok') return true;
-          // 'loading model' 등은 계속 대기
-        }
-      } catch { /* 서버 아직 미기동 */ }
-      await new Promise(r => setTimeout(r, 1500));
-    }
-    return false;
-  }
-
-  async function startLlamaIfNeeded(modelId: string) {
-    if (!modelId.startsWith('llamacpp:')) return;
-    const preset = llamacppPresets.find(p => p.id === modelId);
-    if (!preset) return;
-
-    // 이미 같은 모델로 ready 상태면 패스
-    if (llamaCurrentModelId === modelId && llamaServerStatus === 'ready') return;
-
-    try {
-      // 1. 로컬에 모델이 존재하는지 확인
-      addLog(`[llama.cpp] 모델 파일 검사 중... (${preset.modelName})`);
-      const exists = await invoke<boolean>('check_model_exists', { modelId: preset.modelName });
-
-      if (!exists) {
-        addLog(`[llama.cpp] 모델 파일이 없습니다: ${preset.modelName}`);
-        
-        const confirmed = await ask(
-          `이 작업을 진행하려면 '${preset.name}' 모델 파일(약 3.5GB~5.3GB)이 필요합니다.\n다운로드하시겠습니까?\n\n(다운로드는 백그라운드에서 진행되며 완료 후 서버가 시작됩니다)`,
-          { title: '모델 다운로드 필요', kind: 'info', okLabel: '다운로드 시작', cancelLabel: '취소' }
-        );
-
-        if (!confirmed) {
-          llamaServerStatus = 'error';
-          addLog('[llama.cpp] 모델 다운로드가 사용자에 의해 취소되었습니다.');
-          return;
-        }
-
-        llamaServerStatus = 'downloading';
-        downloadProgress = 0;
-        addLog(`[llama.cpp] 모델 다운로드 시작: ${preset.downloadUrl}`);
-        await invoke('download_model', { modelId: preset.modelName, url: preset.downloadUrl });
-        return; // 다운로드 이벤트 리스너가 완료 후 서버를 시작해 줍니다.
-      }
-
-      llamaServerStatus = 'starting';
-      addLog(`[llama.cpp] 서버 시작 중... (${preset.modelName})`);
-      await invoke('start_llama_server', { modelId: preset.modelName, customPath: llamaServerPath || null });
-
-      addLog('[llama.cpp] 서버 프로세스 시작됨 — 모델 로딩 대기 중...');
-      const ready = await waitForLlamaReady(120);
-      if (!ready) {
-        llamaServerStatus = 'error';
-        throw new Error('llama-server가 120초 내에 준비되지 않았습니다.');
-      }
-
-      llamaServerRunning = true;
-      llamaCurrentModelId = modelId;
-      llamaServerStatus = 'ready';
-      addLog('[llama.cpp] 서버 준비 완료 ✅');
-    } catch (e) {
-      llamaServerStatus = 'error';
-      throw new Error(`llama-server 시작 실패: ${e}`);
-    }
-  }
-
-  /** 모델 드롭다운 변경 시 호출 */
-  async function onModelChange() {
-    localStorage.setItem('selectedModelId', selectedModelId);
-    if (selectedModelId.startsWith('ollama:')) {
-      ollamaModelName = selectedModelId.slice(7);
-      saveModelName();
-      // llama 서버가 떠 있으면 종료
-      if (llamaServerRunning) {
-        try { await invoke('stop_llama_server'); } catch {}
-        llamaServerRunning = false;
-        llamaServerStatus = 'idle';
-        llamaCurrentModelId = '';
-      }
-    } else if (selectedModelId.startsWith('llamacpp:')) {
-      // 비동기로 서버 준비 (번역 시에도 waitForLlamaReady 호출하므로 선제적 시작)
-      startLlamaIfNeeded(selectedModelId).catch(e => addLog(`[llama.cpp] 자동 시작 실패: ${e}`));
-    }
-  }
-
-
   onMount(() => {
     ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
-    llamaServerPath = localStorage.getItem('llamaServerPath') || '';
-    const savedModel = localStorage.getItem('selectedModelId');
-    if (savedModel) selectedModelId = savedModel;
     addLog("앱 초기화 완료. 모델명: " + ollamaModelName);
 
     const handleOutsideClick = (e: MouseEvent) => {
@@ -329,57 +187,9 @@
     };
 
     initOllama();
-    updateLlamaAvailability();
-
-    // 앱 실행 시 이미 llama.cpp 모델이 선택되어 있으면 자동 실행 시도
-    if (selectedModelId.startsWith('llamacpp:')) {
-      startLlamaIfNeeded(selectedModelId).catch(e => addLog(`[llama.cpp] 초기 자동 시작 실패: ${e}`));
-    }
-
-    // Tauri 다운로드 이벤트 수신 등록
-    let unlistenProgress: (() => void) | null = null;
-    let unlistenComplete: (() => void) | null = null;
-    let unlistenError: (() => void) | null = null;
-
-    listen<any>('download-progress', (event) => {
-      const payload = event.payload;
-      if (selectedModelId.startsWith('llamacpp:')) {
-        const preset = llamacppPresets.find(p => p.id === selectedModelId);
-        if (preset && preset.modelName === payload.model_id) {
-          downloadProgress = Math.round(payload.percentage);
-        }
-      }
-    }).then(fn => { unlistenProgress = fn; });
-
-    listen<string>('download-complete', (event) => {
-      const modelId = event.payload;
-      addLog(`[llama.cpp] 모델 다운로드 완료: ${modelId}`);
-      if (selectedModelId.startsWith('llamacpp:')) {
-        const preset = llamacppPresets.find(p => p.id === selectedModelId);
-        if (preset && preset.modelName === modelId) {
-          downloadProgress = 100;
-          // 다운로드 완료되었으므로 자동으로 서버 구동 재시도
-          startLlamaIfNeeded(selectedModelId).catch(e => addLog(`[llama.cpp] 다운로드 후 자동 시작 실패: ${e}`));
-        }
-      }
-    }).then(fn => { unlistenComplete = fn; });
-
-    listen<[string, string]>('download-error', (event) => {
-      const [modelId, errMsg] = event.payload;
-      addLog(`[llama.cpp] 모델 다운로드 실패 (${modelId}): ${errMsg}`);
-      if (selectedModelId.startsWith('llamacpp:')) {
-        const preset = llamacppPresets.find(p => p.id === selectedModelId);
-        if (preset && preset.modelName === modelId) {
-          llamaServerStatus = 'error';
-        }
-      }
-    }).then(fn => { unlistenError = fn; });
 
     return () => {
       window.removeEventListener('click', handleOutsideClick);
-      if (unlistenProgress) unlistenProgress();
-      if (unlistenComplete) unlistenComplete();
-      if (unlistenError) unlistenError();
     };
   });
 
@@ -966,7 +776,7 @@
     }
   }
 
-  async function handleTranslateRow(item: ExtractedString, signal?: AbortSignal) {
+  async function handleTranslateRow(item: ExtractedString) {
     item.translatedText = "번역 중...";
     extractedStrings = [...extractedStrings];
 
@@ -991,71 +801,32 @@ Rules:
 
 Original text: "${item.text}"`;
 
-    const isLlamaCpp = selectedModelId.startsWith('llamacpp:');
-    addLog(`[번역 요청] 원문: "${item.text}" | 모델: ${selectedModelId}`);
+    addLog(`[번역 요청] 원문: "${item.text}" | 모델명: ${ollamaModelName}`);
 
     try {
-      let responseText = '';
+      const response = await fetch("http://127.0.0.1:11434/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: ollamaModelName,
+          prompt: prompt,
+          stream: false
+        })
+      });
 
-      if (isLlamaCpp) {
-        // llama.cpp 서버 (OpenAI 호환 API)
-        await startLlamaIfNeeded(selectedModelId);
-        const lcResponse = await fetch("http://127.0.0.1:8080/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal,
-          body: JSON.stringify({
-            messages: [
-              { role: "system", content: "You are a professional Japanese to Korean game script translator. Output ONLY the Korean translation, nothing else." },
-              { role: "user", content: prompt }
-            ],
-            temperature: 0.3,
-            stream: false
-          })
-        });
-        if (!lcResponse.ok) {
-          throw new Error(`llama.cpp 통신 실패: ${lcResponse.status} ${lcResponse.statusText}`);
-        }
-        const lcResult = await lcResponse.json();
-        responseText = lcResult.choices?.[0]?.message?.content || '';
-      } else {
-        // Ollama API
-        const ollamaModel = selectedModelId.startsWith('ollama:') ? selectedModelId.slice(7) : ollamaModelName;
-        const response = await fetch("http://127.0.0.1:11434/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal,
-          body: JSON.stringify({
-            model: ollamaModel,
-            prompt: prompt,
-            stream: false
-          })
-        });
-        if (!response.ok) {
-          throw new Error(`Ollama 통신 실패: ${response.status} ${response.statusText}`);
-        }
-        const result = await response.json();
-        responseText = result.response || '';
+      if (!response.ok) {
+        throw new Error(`Ollama 통신 실패: ${response.status} ${response.statusText}`);
       }
+
+      const result = await response.json();
+      const responseText: string = result.response || "";
       
-      // AI 응답 클리닝: "Korean translation: ..." 등 군더더기 제거
-      let cleaned = responseText.trim();
-      const prefixRegex = /^(korean\s+translation|translation|korean|한국어\s*번역|한글\s*번역|번역)\s*[:\-]\s*/i;
-      for (let i = 0; i < 5; i++) {
-        const before = cleaned;
-        cleaned = cleaned.replace(prefixRegex, '').trim();
-        cleaned = cleaned.replace(/^["\u201c](([\s\S]*))["\u201d]$/, '$1').trim();
-        cleaned = cleaned.replace(/^\'(([\s\S]*))\'\ *$/, '$1').trim();
-        if (cleaned === before) break;
-      }
-
       // 원문의 앞쪽 공백(들여쓰기) 보존
       const leadingSpaces = item.text.match(/^\s*/)?.[0] || '';
-      const cleanText = leadingSpaces + cleaned;
+      const cleanText = leadingSpaces + responseText.trim().replace(/^["'](.*)["']$/, '$1');
       
       item.translatedText = cleanText;
       item.errorMsg = undefined;
-      validateRow(item);
       addLog(`[번역 완료] 결과: "${cleanText}"`);
 
       if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패") {
@@ -1063,11 +834,6 @@ Original text: "${item.text}"`;
         await saveCache();
       }
     } catch(e: any) {
-      if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
-        item.translatedText = "번역 중단";
-        addLog(`[번역 중단] 작업이 사용자에 의해 중지되었습니다.`);
-        throw e; // 호출한 상위 함수로 AbortError 전파
-      }
       console.error("Translation Error", e);
       const errMsg = e?.message || JSON.stringify(e) || String(e);
       item.translatedText = "번역 실패";
@@ -1108,81 +874,11 @@ Original text: "${item.text}"`;
     }
   }
 
-  function validateRow(item: ExtractedString) {
-    if (!item.translatedText || item.translatedText === "번역 중..." || item.translatedText === "번역 실패") {
-      item.validationError = undefined;
-      return;
-    }
-
-    const jpText = item.text;
-    const koText = item.translatedText;
-
-    // 1. 용어 사전 미참조 검증
-    if (selectedFolder) {
-      const matchedEntries = Object.entries(glossaryData).filter(([jp]) => jp && jpText.includes(jp));
-      for (const [jp, ko] of matchedEntries) {
-        if (!koText.includes(ko)) {
-          item.validationError = `용어 사전 미참조 ("${jp}" → "${ko}")`;
-          return;
-        }
-      }
-    }
-
-    // 2. 불완전 번역 (일본어 문자 잔존 여부)
-    const hasJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(koText);
-    if (hasJapanese) {
-      // 원문에도 한자가 있는 경우는 허용 (일본 고유명사 등)
-      const jpOnlyKana = /[\u3040-\u309F\u30A0-\u30FF]/.test(koText);
-      if (jpOnlyKana) {
-        item.validationError = `번역 미완료 (일본어 문자 잔존)`;
-        return;
-      }
-    }
-
-    // 3. 불필요한 접두사 잔존 (Korean translation: 등)
-    const prefixCheck = /^(korean\s+translation|translation|korean|한국어\s*번역|한글\s*번역)\s*[:\-]/i;
-    if (prefixCheck.test(koText.trim())) {
-      item.validationError = `불필요한 접두사 잔존`;
-      return;
-    }
-
-    // 4. 개행 수 불일치
-    const countNewlines = (s: string) => (s.match(/\n/g) || []).length;
-    if (countNewlines(jpText) !== countNewlines(koText)) {
-      item.validationError = `개행 수 불일치 (원문: ${countNewlines(jpText)}개, 번역: ${countNewlines(koText)}개)`;
-      return;
-    }
-
-    item.validationError = undefined;
-  }
-
-  function handleBatchValidate() {
-    for (const item of extractedStrings) {
-      validateRow(item);
-    }
-    extractedStrings = [...extractedStrings];
-    const errorCount = extractedStrings.filter(i => i.validationError).length;
-    addLog(`[일괄 검증 완료] 문제 항목 ${errorCount}개 발견`);
-  }
-
-  function cancelBatchTranslation() {
-    cancelRequested = true;
-    if (translationAbortController) {
-      translationAbortController.abort();
-      addLog("번역 중단 요청 전송됨...");
-    }
-  }
-
   async function handleBatchTranslate() {
-    const itemsToTranslate = extractedStrings.filter(i =>
-      !i.translatedText ||
-      i.translatedText === "번역 실패" ||
-      i.validationError !== undefined
-    );
+    const itemsToTranslate = extractedStrings.filter(i => !i.translatedText || i.translatedText === "번역 실패");
     if (itemsToTranslate.length === 0) return;
     isTranslating = true;
     cancelRequested = false;
-    translationAbortController = new AbortController();
     batchTotal = itemsToTranslate.length;
     batchCompleted = 0;
 
@@ -1196,8 +892,7 @@ Original text: "${item.text}"`;
           break;
         }
 
-        // validationError가 있으면 캐시 없이 항상 재번역
-        if (!item.validationError && selectedFolder && cacheData[item.text]) {
+        if (selectedFolder && cacheData[item.text]) {
           item.translatedText = cacheData[item.text];
           item.errorMsg = undefined;
           batchCompleted++;
@@ -1206,20 +901,13 @@ Original text: "${item.text}"`;
           continue;
         }
 
-        try {
-          await handleTranslateRow(item, translationAbortController.signal);
-        } catch (err: any) {
-          if (err.name === 'AbortError' || (err.message && err.message.includes('abort'))) {
-            addLog("일괄 번역이 즉시 중지되었습니다.");
-            break;
+        if (!item.translatedText || item.translatedText === "번역 실패") {
+          await handleTranslateRow(item);
+          batchCompleted++;
+          
+          if (batchCompleted % 10 === 0) {
+            await saveStagedFile();
           }
-          throw err;
-        }
-        
-        batchCompleted++;
-        
-        if (batchCompleted % 10 === 0) {
-          await saveStagedFile();
         }
       }
       if (cacheUpdates) {
@@ -1235,7 +923,6 @@ Original text: "${item.text}"`;
       batchTotal = 0;
       batchCompleted = 0;
       cancelRequested = false;
-      translationAbortController = null;
     }
   }
 
@@ -1361,86 +1048,20 @@ Original text: "${item.text}"`;
   <header class="glass-panel header">
     <div class="api-section" style="display: flex; align-items: center; gap: 0.5rem;">
       <label style="font-weight: 500; color: var(--text-secondary); white-space: nowrap; margin: 0;">모델:</label>
-      <select
-        bind:value={selectedModelId}
-        on:change={onModelChange}
-        class="api-input"
-        style="cursor: pointer;"
-        disabled={isTranslating || llamaServerStatus === 'starting' || llamaServerStatus === 'downloading'}
-      >
-        <optgroup label="llama.cpp">
-          {#each llamacppPresets as preset}
-            <option value={preset.id}>{preset.name}{isLlamaServerAvailable ? '' : ' (실행파일 없음)'}</option>
+      {#if availableModels.length > 0}
+        <select bind:value={ollamaModelName} on:change={saveModelName} class="api-input" style="cursor: pointer;" disabled={isTranslating}>
+          {#each availableModels as model}
+            <option value={model.name}>Ollama({model.name})</option>
           {/each}
-        </optgroup>
-        {#if availableModels.length > 0}
-          <optgroup label="Ollama">
-            {#each availableModels as model}
-              <option value={'ollama:' + model.name}>Ollama ({model.name})</option>
-            {/each}
-          </optgroup>
-        {/if}
-      </select>
-
-      <!-- 신호등 상태 -->
-      {#if selectedModelId.startsWith('llamacpp:')}
-        <div class="llama-dot-wrap">
-          <div
-            class="llama-dot"
-            class:llama-dot-ok={llamaServerStatus === 'ready'}
-            class:llama-dot-warn={llamaServerStatus === 'starting'}
-            class:llama-dot-download={llamaServerStatus === 'downloading'}
-            class:llama-dot-err={llamaServerStatus === 'idle' || llamaServerStatus === 'error'}
-            on:click={selectLlamaServerPath}
-            role="button"
-            tabindex="0"
-            on:keydown={(e) => e.key === 'Enter' && selectLlamaServerPath()}
-          ></div>
-          <div class="llama-tooltip"
-            class:llama-tooltip-ok={llamaServerStatus === 'ready'}
-            class:llama-tooltip-warn={llamaServerStatus === 'starting'}
-            class:llama-tooltip-download={llamaServerStatus === 'downloading'}
-            class:llama-tooltip-err={llamaServerStatus === 'idle' || llamaServerStatus === 'error'}
-          >
-            <div class="llama-tooltip-row">
-              <span class="llama-tooltip-key">상태</span>
-              <span class="llama-tooltip-val">
-                {#if llamaServerStatus === 'ready'}✅ 서버 준비 완료
-                {:else if llamaServerStatus === 'starting'}⏳ 모델 로딩 중...
-                {:else if llamaServerStatus === 'downloading'}📥 다운로드 중 ({downloadProgress}%)
-                {:else if llamaServerStatus === 'error'}❌ 시작 실패
-                {:else}⚪ 미시작
-                {/if}
-              </span>
-            </div>
-            {#if llamaServerStatus === 'downloading'}
-              <div class="llama-download-progress-bar-wrap" style="width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; margin: 0.5rem 0;">
-                <div class="llama-download-progress-bar" style="width: {downloadProgress}%; height: 100%; background: #3b82f6; transition: width 0.3s ease;"></div>
-              </div>
-            {/if}
-            <div class="llama-tooltip-row">
-              <span class="llama-tooltip-key">경로</span>
-              <span class="llama-tooltip-val llama-tooltip-path">{llamaServerPath || '미설정 (시스템 PATH 탐색)'}</span>
-            </div>
-            {#if !isLlamaServerAvailable}
-              <div class="llama-tooltip-hint">클릭하여 llama-server 경로 지정</div>
-            {:else if llamaServerStatus === 'downloading'}
-              <div class="llama-tooltip-hint">다운로드 완료 대기 중...</div>
-            {:else if llamaServerStatus !== 'ready'}
-              <div class="llama-tooltip-hint">모델 선택 시 자동 시작됩니다</div>
-            {:else}
-              <div class="llama-tooltip-hint">클릭하여 경로 재지정</div>
-            {/if}
-          </div>
-        </div>
+        </select>
       {:else}
-        <!-- Ollama 신호등 -->
-        <div
-          class="status-dot"
-          title={ollamaStatus === 'online' ? 'Ollama 서버 정상 연결됨' : (ollamaStatus === 'checking' ? 'Ollama 서버 확인 중...' : 'Ollama 서버 연결 실패')}
-          style="width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background-color: {ollamaStatus === 'online' ? '#10b981' : (ollamaStatus === 'checking' ? '#f59e0b' : '#ef4444')}; box-shadow: 0 0 5px {ollamaStatus === 'online' ? 'rgba(16,185,129,0.5)' : (ollamaStatus === 'checking' ? 'rgba(245,158,11,0.5)' : 'rgba(239,68,68,0.5)')}; margin-left: 0.2rem;"
-        ></div>
+        <input type="text" bind:value={ollamaModelName} on:change={saveModelName} placeholder="Ollama 서버 연결 실패 (수동 입력)" class="api-input" disabled={isTranslating} />
       {/if}
+      <div 
+        class="status-dot" 
+        title={ollamaStatus === 'online' ? 'Ollama 서버 정상 연결됨' : (ollamaStatus === 'checking' ? 'Ollama 서버 확인 중...' : 'Ollama 서버 연결 실패 (Ollama 앱이 켜져 있는지 확인하세요)')}
+        style="width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background-color: {ollamaStatus === 'online' ? '#10b981' : (ollamaStatus === 'checking' ? '#f59e0b' : '#ef4444')}; box-shadow: 0 0 5px {ollamaStatus === 'online' ? 'rgba(16,185,129,0.5)' : (ollamaStatus === 'checking' ? 'rgba(245,158,11,0.5)' : 'rgba(239,68,68,0.5)')}; margin-left: 0.2rem;"
+      ></div>
     </div>
 
     <div class="header-actions" style="display: flex; align-items: center; gap: 0.8rem;">
@@ -1548,15 +1169,12 @@ Original text: "${item.text}"`;
               <span style="color: var(--accent-color); font-weight: bold; white-space: nowrap; font-size: 0.9rem; margin-right: 0.5rem;">
                 {batchCompleted} / {batchTotal} 완료
               </span>
-              <button class="btn" style="background-color: #ef4444;" on:click={cancelBatchTranslation}>
+              <button class="btn" style="background-color: #ef4444;" on:click={() => cancelRequested = true}>
                 중단하기
               </button>
             {:else}
               <button class="btn" on:click={handleBatchTranslate} disabled={extractedStrings.length === 0}>
                 일괄 번역
-              </button>
-              <button class="btn" style="background-color: #7c3aed;" on:click={handleBatchValidate} disabled={extractedStrings.length === 0 || isTranslating}>
-                일괄 검증
               </button>
             {/if}
           </div>
@@ -1618,17 +1236,12 @@ Original text: "${item.text}"`;
                 <div class="translate-column">
                   <textarea 
                     class="trans-input" 
-                    class:has-error={item.validationError}
                     bind:value={item.translatedText} 
                     placeholder="번역된 내용이 여기에 표시됩니다..."
                     disabled={item.translatedText === "번역 중..."}
                     on:blur={() => handleManualTranslationChange(item)}
                   ></textarea>
-                  {#if item.validationError}
-                    <div class="validation-error-indicator" title={item.validationError}>
-                      ⚠️ {item.validationError}
-                    </div>
-                  {:else if item.translatedText === "번역 실패" && item.errorMsg}
+                  {#if item.translatedText === "번역 실패" && item.errorMsg}
                     <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
                       navigator.clipboard.writeText(item.errorMsg || '');
                       alert("에러 로그가 클립보드에 복사되었습니다!");
@@ -1925,155 +1538,6 @@ Original text: "${item.text}"`;
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
   }
 
-  .llama-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    cursor: pointer;
-    transition: transform 0.15s ease, box-shadow 0.2s ease;
-    margin-left: 0.2rem;
-
-    &:hover {
-      transform: scale(1.3);
-    }
-  }
-
-  .llama-dot-ok {
-    background-color: #10b981;
-    box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
-  }
-
-  .llama-dot-warn {
-    background-color: #f59e0b;
-    box-shadow: 0 0 6px rgba(245, 158, 11, 0.7);
-    animation: pulse-amber 1s ease-in-out infinite;
-  }
-
-  .llama-dot-download {
-    background-color: #3b82f6;
-    box-shadow: 0 0 6px rgba(59, 130, 246, 0.7);
-    animation: pulse-blue 1.2s ease-in-out infinite;
-  }
-
-  .llama-dot-err {
-    background-color: #ef4444;
-    box-shadow: 0 0 6px rgba(239, 68, 68, 0.7);
-    animation: pulse-red 1.5s ease-in-out infinite;
-  }
-
-  @keyframes pulse-amber {
-    0%, 100% { box-shadow: 0 0 4px rgba(245, 158, 11, 0.4); }
-    50% { box-shadow: 0 0 12px rgba(245, 158, 11, 0.9); }
-  }
-
-  @keyframes pulse-blue {
-    0%, 100% { box-shadow: 0 0 4px rgba(59, 130, 246, 0.4); }
-    50% { box-shadow: 0 0 12px rgba(59, 130, 246, 0.9); }
-  }
-
-  @keyframes pulse-red {
-    0%, 100% { box-shadow: 0 0 4px rgba(239, 68, 68, 0.5); }
-    50% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.9); }
-  }
-
-  .llama-dot-wrap {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    margin-left: 0.2rem;
-
-    &:hover .llama-tooltip {
-      opacity: 1;
-      transform: translateY(0);
-      pointer-events: auto;
-    }
-  }
-
-  .llama-tooltip {
-    position: absolute;
-    top: calc(100% + 10px);
-    left: 50%;
-    transform: translateX(-50%) translateY(-4px);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.18s ease, transform 0.18s ease;
-    z-index: 200;
-    min-width: 220px;
-    padding: 0.6rem 0.75rem;
-    border-radius: 8px;
-    backdrop-filter: blur(12px);
-    font-size: 0.78rem;
-    white-space: nowrap;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-
-    /* 말풍선 꼬리 (위쪽) */
-    &::after {
-      content: '';
-      position: absolute;
-      bottom: 100%;
-      left: 50%;
-      transform: translateX(-50%);
-      border: 6px solid transparent;
-    }
-
-    &.llama-tooltip-ok {
-      background: rgba(6, 30, 20, 0.92);
-      border: 1px solid rgba(16, 185, 129, 0.4);
-      &::after { border-bottom-color: rgba(16, 185, 129, 0.4); }
-    }
-    &.llama-tooltip-download {
-      background: rgba(6, 18, 30, 0.92);
-      border: 1px solid rgba(59, 130, 246, 0.4);
-      &::after { border-bottom-color: rgba(59, 130, 246, 0.4); }
-    }
-    &.llama-tooltip-err {
-      background: rgba(30, 6, 6, 0.92);
-      border: 1px solid rgba(239, 68, 68, 0.4);
-      &::after { border-bottom-color: rgba(239, 68, 68, 0.4); }
-    }
-  }
-
-  .llama-tooltip-row {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .llama-tooltip-key {
-    font-size: 0.68rem;
-    font-weight: 700;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    flex-shrink: 0;
-    width: 28px;
-  }
-
-  .llama-tooltip-val {
-    color: #e2e8f0;
-    font-size: 0.78rem;
-  }
-
-  .llama-tooltip-path {
-    color: #94a3b8;
-    font-size: 0.72rem;
-    max-width: 180px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: block;
-  }
-
-  .llama-tooltip-hint {
-    margin-top: 0.4rem;
-    padding-top: 0.35rem;
-    border-top: 1px solid rgba(255,255,255,0.08);
-    font-size: 0.68rem;
-    color: #64748b;
-    text-align: center;
-  }
-
   .content-area {
     flex: 1;
     display: flex;
@@ -2181,16 +1645,10 @@ Original text: "${item.text}"`;
           font-size: 1rem;
           font-family: inherit;
           resize: vertical;
-          transition: background 0.2s;
           
           &:focus {
             outline: none;
             background: rgba(255, 255, 255, 0.02);
-          }
-
-          &.has-error {
-            background: rgba(239, 68, 68, 0.12);
-            color: #fca5a5;
           }
         }
 
@@ -2211,23 +1669,6 @@ Original text: "${item.text}"`;
           &:hover {
             background: rgba(239, 68, 68, 0.4);
           }
-        }
-
-        .validation-error-indicator {
-          position: absolute;
-          bottom: 4px;
-          left: 8px;
-          right: 8px;
-          background: rgba(239, 68, 68, 0.18);
-          border: 1px solid rgba(239, 68, 68, 0.5);
-          color: #fca5a5;
-          font-size: 0.7rem;
-          padding: 0.15rem 0.5rem;
-          border-radius: 4px;
-          z-index: 10;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
         }
       }
 

@@ -1,0 +1,44 @@
+Created At: 2026-05-26T10:21:14Z
+Completed At: 2026-05-26T10:21:14Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2442
+Total Bytes: 85718
+Showing lines 1150 to 1185
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1150:       addLog("[임시 저장 실패] " + String(e));
+1151:     }
+1152:   }
+1153: 
+1154:   async function clearAllTranslations() {
+1155:     if (extractedStrings.length === 0) return;
+1156:     
+1157:     const confirmClear = await ask(
+1158:       "현재 표시된 모든 번역 데이터(번역문)를 완전히 삭제하고 초기화하시겠습니까?\n이 작업은 복구할 수 없습니다.",
+1159:       { title: '번역 전체 삭제', kind: 'warning', okLabel: '예, 삭제합니다', cancelLabel: '취소' }
+1160:     );
+1161:     
+1162:     if (confirmClear) {
+1163:       for (const item of extractedStrings) {
+1164:         item.translatedText = '';
+1165:         item.errorMsg = undefined;
+1166:       }
+1167:       
+1168:       saveCurrentTranslations();
+1169:       try {
+1170:         await saveStagedFile();
+1171:       } catch (e) {
+1172:         // ignore staged save errors
+1173:       }
+1174:       
+1175:       addLog("현재 뷰의 모든 번역 데이터가 초기화되었습니다.");
+1176:       alert("모든 번역이 초기화되었습니다.");
+1177:     }
+1178:   }
+1179: 
+1180:   function validateRow(item: ExtractedString) {
+1181:     if (!item.translatedText || item.translatedText === "번역 중..." || item.translatedText === "번역 실패") {
+1182:       item.validationError = undefined;
+1183:       return;
+1184:     }
+1185: 
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

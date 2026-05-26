@@ -1,0 +1,43 @@
+Created At: 2026-05-26T10:21:44Z
+Completed At: 2026-05-26T10:21:44Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2442
+Total Bytes: 85718
+Showing lines 1276 to 1310
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1276:           throw new Error("llama.cpp 서버를 기동하는 데 실패하여 일괄 번역을 중단합니다.");
+1277:         }
+1278:       }
+1279: 
+1280:       for (let item of itemsToTranslate) {
+1281:         if (cancelRequested) {
+1282:           addLog("사용자에 의해 일괄 번역이 중단되었습니다.");
+1283:           break;
+1284:         }
+1285: 
+1286:         if (selectedFolder && cacheData[item.text]) {
+1287:           item.translatedText = cacheData[item.text];
+1288:           item.errorMsg = undefined;
+1289:           batchCompleted++;
+1290:           cacheUpdates = true;
+1291:           addLog(`[캐시 적용] 원문: "${item.text}" -> "${cacheData[item.text]}"`);
+1292:           continue;
+1293:         }
+1294: 
+1295:         if (!item.translatedText || item.translatedText === "번역 실패") {
+1296:           await handleTranslateRow(item);
+1297:           batchCompleted++;
+1298:           
+1299:           if (batchCompleted % 10 === 0) {
+1300:             await saveStagedFile();
+1301:           }
+1302:         }
+1303:       }
+1304:       if (cacheUpdates) {
+1305:         extractedStrings = [...extractedStrings];
+1306:         saveCurrentTranslations();
+1307:       }
+1308:       await saveStagedFile();
+1309:     } catch (e) {
+1310:       console.error("Batch translation error", e);
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

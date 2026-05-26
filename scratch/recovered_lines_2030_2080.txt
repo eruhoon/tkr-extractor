@@ -1,0 +1,59 @@
+Created At: 2026-05-26T10:06:52Z
+Completed At: 2026-05-26T10:06:52Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2396
+Total Bytes: 83576
+Showing lines 2030 to 2080
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+2030:     .string-row {
+2031:       display: grid;
+2032:       grid-template-columns: 1fr 1fr 100px;
+2033:       align-items: stretch;
+2034:       background: rgba(15, 23, 42, 0.5);
+2035:       border: 1px solid var(--border-color);
+2036:       border-radius: 8px;
+2037:       overflow: hidden;
+2038:       transition: all 0.3s ease;
+2039:       min-height: 80px;
+2040: 
+2041:       &.translating {
+2042:         border-color: var(--accent-color);
+2043:         box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+2044:         opacity: 0.9;
+2045:         
+2046:         .translate-column {
+2047:           background: rgba(59, 130, 246, 0.05);
+2048:         }
+2049:       }
+2050: 
+2051:       .original-column {
+2052:         padding: 1rem;
+2053:         border-right: 1px solid var(--border-color);
+2054:         display: flex;
+2055:         align-items: center;
+2056:         word-break: break-all;
+2057: 
+2058:         .original-text {
+2059:           font-size: 1rem;
+2060:           line-height: 1.4;
+2061:           margin: 0;
+2062:         }
+2063:       }
+2064: 
+2065:       .translate-column {
+2066:         border-right: 1px solid var(--border-color);
+2067:         display: flex;
+2068:         position: relative;
+2069:         
+2070:         .trans-input {
+2071:           width: 100%;
+2072:           height: 100%;
+2073:           min-height: 80px;
+2074:           background: transparent;
+2075:           border: none;
+2076:           padding: 1rem;
+2077:           color: #34d399; /* Green accent */
+2078:           font-size: 1rem;
+2079:           font-family: inherit;
+2080:           resize: vertical;
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

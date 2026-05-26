@@ -10,7 +10,12 @@
     "core:event:default",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "http://localhost:11434/*" }, { "url": "http://127.0.0.1:11434/*" }]
+      "allow": [
+        { "url": "http://localhost:11434/*" }, 
+        { "url": "http://127.0.0.1:11434/*" },
+        { "url": "http://localhost:8080/*" },
+        { "url": "http://127.0.0.1:8080/*" }
+      ]
     }
   ]
 }

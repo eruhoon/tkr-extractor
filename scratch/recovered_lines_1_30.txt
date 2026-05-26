@@ -1,0 +1,38 @@
+Created At: 2026-05-26T10:21:28Z
+Completed At: 2026-05-26T10:21:28Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2442
+Total Bytes: 85718
+Showing lines 1 to 30
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: <script lang="ts">
+2:   import { onMount } from 'svelte';
+3:   import { invoke } from '@tauri-apps/api/core';
+4:   import { listen, TauriEvent } from '@tauri-apps/api/event';
+5:   import { open, save, ask } from '@tauri-apps/plugin-dialog';
+6:   import { fetch } from '@tauri-apps/plugin-http';
+7:   import { translateSentenceOllama } from '$lib/translator';
+8: 
+9:   interface ScriptEntry {
+10:     id: number;
+11:     title: string;
+12:     code: string;
+13:     count?: number;
+14:     translations?: { [key: string]: string };
+15:   }
+16: 
+17:   interface ExtractedString {
+18:     id: number;
+19:     text: string;
+20:     translatedText: string;
+21:     originalCodeMatch: string;
+22:     errorMsg?: string;
+23:     validationError?: string;
+24:   }
+25: 
+26:   let { isDragging = false } = $props();
+27: 
+28:   let originalFilePath = $state('');
+29:   let scripts = $state<ScriptEntry[]>([]);
+30:   let selectedSidebarItem = $state<SidebarItem | null>(null);
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

@@ -1,0 +1,39 @@
+Created At: 2026-05-26T09:57:19Z
+Completed At: 2026-05-26T09:57:19Z
+File Path: `file:///c:/Users/CHC/Desktop/tkr-extractor/src/lib/components/ScriptTranslator.svelte`
+Total Lines: 2385
+Total Bytes: 82850
+Showing lines 1570 to 1600
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1570:               </button>
+1571:             {/if}
+1572:           </div>
+1573:         </div>
+1574:         
+1575:         <!-- 용어 사전 패널 (고정 헤더 아래에 고정 배치) -->
+1576:         {#if showGlossaryPanel}
+1577:         <div class="glossary-fixed-container">
+1578:           <div class="glossary-panel glass-panel">
+1579:             <div class="glossary-header">
+1580:               <h3>용어 사전 (Glossary)</h3>
+1581:               <span style="font-size: 0.8rem; color: #94a3b8; margin-left: 0.5rem;">
+1582:                 * 등록된 고유명사는 AI 번역 시 일관성 있게 우선 적용됩니다.
+1583:               </span>
+1584:             </div>
+1585:             <div class="glossary-add-form">
+1586:               <input type="text" bind:value={newGlossaryJp} placeholder="일본어 원문 (예: 薬草)" class="glossary-input" />
+1587:               <span style="color: #64748b;">➔</span>
+1588:               <input type="text" bind:value={newGlossaryKo} placeholder="한국어 번역 (예: 약초)" class="glossary-input" />
+1589:               <button class="btn-small btn-add" on:click={addGlossaryItem}>추가</button>
+1590:             </div>
+1591:             <div class="glossary-content scrollbar-hidden">
+1592:               {#if Object.keys(glossaryData).length === 0}
+1593:                 <div class="empty-glossary">등록된 용어가 없습니다. 폴더 단위 작업 시 등록해 보세요.</div>
+1594:               {:else}
+1595:                 <table class="glossary-table">
+1596:                   <thead>
+1597:                     <tr>
+1598:                       <th>일본어 원문</th>
+1599:                       <th>한국어 번역</th>
+1600:                       <th style="width: 60px;">관리</th>
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

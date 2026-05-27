@@ -12,6 +12,7 @@
     code: string;
     count?: number;
     translations?: { [key: string]: string };
+    jpTexts?: string[]; // 일본어 문자열 추출 캐시
   }
 
   interface ExtractedString {
@@ -181,13 +182,23 @@
     
     let completed = 0;
     if (isScripts) {
-      const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
-      let match;
-      while ((match = jpRegex.exec(s.code)) !== null) {
-        const text = match[1] || match[2] || '';
-        const trans = s.translations[text];
-        if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
-          completed++;
+      if (s.jpTexts) {
+        for (let i = 0; i < s.jpTexts.length; i++) {
+          const text = s.jpTexts[i];
+          const trans = s.translations[text];
+          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+            completed++;
+          }
+        }
+      } else {
+        const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+        let match;
+        while ((match = jpRegex.exec(s.code)) !== null) {
+          const text = match[1] || match[2] || '';
+          const trans = s.translations[text];
+          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+            completed++;
+          }
         }
       }
     } else {
@@ -225,6 +236,12 @@
 
   // llama.cpp 관련
   const llamacppPresets = [
+    { 
+      id: 'llamacpp:qwen2.5-3b-instruct', 
+      name: 'llama.cpp (Qwen2.5 3B Instruct)', 
+      modelName: 'qwen2.5-3b-instruct',
+      downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf'
+    },
     { 
       id: 'llamacpp:gemma-4-E4B-it', 
       name: 'llama.cpp (Gemma-4 E4B-it)', 
@@ -898,14 +915,22 @@
       const loaded: ScriptEntry[] = await invoke('parse_rvdata', { path });
       scripts = loaded.map(s => {
         let count = 0;
+        const jpTexts: string[] = [];
         if (isScripts) {
           const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
-          const matches = s.code.match(jpRegex);
-          count = matches ? matches.length : 0;
+          let match;
+          while ((match = jpRegex.exec(s.code)) !== null) {
+            const text = match[1] || match[2] || '';
+            jpTexts.push(text);
+          }
+          count = jpTexts.length;
         } else {
           count = s.code ? 1 : 0;
+          if (s.code) {
+            jpTexts.push(s.code);
+          }
         }
-        return { ...s, count };
+        return { ...s, count, jpTexts };
       });
 
       if (shouldApplyStaged) {

@@ -18,6 +18,11 @@ Original text: "${sentence}"`;
             body: JSON.stringify({
                 model: ollamaModelName,
                 prompt: prompt,
+                options: {
+                    num_ctx: 1024,
+                    num_predict: 256,
+                    temperature: 0.0
+                },
                 stream: false
             })
         });

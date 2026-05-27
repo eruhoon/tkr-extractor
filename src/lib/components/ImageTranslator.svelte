@@ -428,6 +428,11 @@ Output ONLY the JSON array without any markdown or conversational text.`;
             model: ollamaModelName,
             prompt: prompt,
             images: [base64Data],
+            options: {
+              num_ctx: 1024,
+              num_predict: 256,
+              temperature: 0.0
+            },
             stream: false,
             format: "json"
           })

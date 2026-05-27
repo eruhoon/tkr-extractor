@@ -417,6 +417,7 @@ Output ONLY the JSON array without any markdown or conversational text.`;
                 id: 1
               }
             ],
+            n_predict: 1024,
             stream: false
           })
         });
@@ -426,11 +427,12 @@ Output ONLY the JSON array without any markdown or conversational text.`;
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model: ollamaModelName,
+            system: "You are an expert OCR and Japanese to Korean translator. Extract text and translate it into fluent Korean. Output ONLY valid JSON array without markdown blocks.",
             prompt: prompt,
             images: [base64Data],
             options: {
-              num_ctx: 1024,
-              num_predict: 256,
+              num_ctx: 4096,
+              num_predict: 1024,
               temperature: 0.0
             },
             stream: false,

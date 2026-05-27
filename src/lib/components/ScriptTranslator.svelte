@@ -985,6 +985,7 @@
 
     if (selected && typeof selected === 'string') {
       selectedFolder = selected;
+      isLoading = true;
       try {
         const files: string[] = await invoke('get_rvdata_in_folder', { folderPath: selectedFolder });
         rvdataFiles = files;
@@ -1002,6 +1003,8 @@
       } catch (e) {
         alert("폴더 로드 실패: " + e);
         addLog("폴더 로드 실패: " + String(e));
+      } finally {
+        isLoading = false;
       }
     }
   }
@@ -1098,6 +1101,9 @@ Rules:
 4. Preserve all special characters, brackets (e.g. 「 and 」), ellipses (e.g. …… or ......), and punctuation marks from the original text exactly.
 5. Preserve placeholders like __TAG_0__, __TAG_1__ exactly in their original relative position. Do NOT translate or remove them.
 6. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
+7. Preserve line breaks (\n) exactly as they appear in the original text.
+
+CRITICAL: The final output MUST be written in Korean (한국어). Do not use English.
 
 Original text: "${cleanSourceText}"`;
 
@@ -1112,6 +1118,7 @@ Original text: "${cleanSourceText}"`;
       if (isLlamaCpp) {
         // llama.cpp 서버 (OpenAI 호환 API)
         await startLlamaIfNeeded(selectedModelId);
+        const examplePrompt = prompt.replace(cleanSourceText, "なるほど。");
         const lcResponse = await fetch("http://127.0.0.1:8080/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1119,10 +1126,12 @@ Original text: "${cleanSourceText}"`;
           body: JSON.stringify({
             messages: [
               { role: "system", content: "You are a professional Japanese to Korean game script translator. Output ONLY the Korean translation, nothing else." },
+              { role: "user", content: examplePrompt },
+              { role: "assistant", content: "그렇군요." },
               { role: "user", content: prompt }
             ],
             temperature: 0.0,
-            max_tokens: 256,
+            max_tokens: 1024,
             stream: false
           })
         });
@@ -1134,16 +1143,22 @@ Original text: "${cleanSourceText}"`;
       } else {
         // Ollama API
         const ollamaModel = selectedModelId.startsWith('ollama:') ? selectedModelId.slice(7) : ollamaModelName;
-        const response = await fetch("http://127.0.0.1:11434/api/generate", {
+        const examplePrompt = prompt.replace(cleanSourceText, "なるほど。");
+        const response = await fetch("http://127.0.0.1:11434/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal,
           body: JSON.stringify({
             model: ollamaModel,
-            prompt: prompt,
+            messages: [
+              { role: "system", content: "You are a professional Japanese to Korean game script translator. You MUST output your translation in Korean (한국어) only. Do not use English." },
+              { role: "user", content: examplePrompt },
+              { role: "assistant", content: "그렇군요." },
+              { role: "user", content: prompt }
+            ],
             options: {
-              num_ctx: 1024,
-              num_predict: 256,
+              num_ctx: 4096,
+              num_predict: 1024,
               temperature: 0.0
             },
             stream: false
@@ -1153,11 +1168,15 @@ Original text: "${cleanSourceText}"`;
           throw new Error(`Ollama 통신 실패: ${response.status} ${response.statusText}`);
         }
         const result = await response.json();
-        responseText = result.response || '';
+        responseText = result.message?.content || '';
       }
       
       // AI 응답 클리닝: "Korean translation: ..." 등 군더더기 제거
       let cleaned = responseText.trim();
+      
+      // 일본어 구두점(마침표, 쉼표)을 한국어 구두점으로 자동 정규화
+      cleaned = cleaned.replace(/。/g, '.').replace(/、/g, ',');
+
       const prefixRegex = /^(korean\s+translation|translation|korean|한국어\s*번역|한글\s*번역|번역)\s*[:\-]\s*/i;
       for (let i = 0; i < 5; i++) {
         const before = cleaned;
@@ -1165,6 +1184,43 @@ Original text: "${cleanSourceText}"`;
         cleaned = cleaned.replace(/^["\u201c](([\s\S]*))["\u201d]$/, '$1').trim();
         cleaned = cleaned.replace(/^\'(([\s\S]*))\'\ *$/, '$1').trim();
         if (cleaned === before) break;
+      }
+
+      // 특수기호 동기화 1: 말줄임표(……) 보존
+      if (cleanSourceText.includes('……') && !cleaned.includes('……')) {
+        cleaned = cleaned.replace(/\.\.\./g, '……');
+      }
+
+      // 특수기호 동기화 2: 괄호 일치화 (대사가 여러 줄로 나뉘어 단일 괄호만 있는 경우도 처리)
+      // 번역문에 이상한 서양식 따옴표가 생겼다면 일단 싹 다 벗겨냄
+      const quoteRegexBoth = /^["'«“‘](.*)["'»”’]$/;
+      if (quoteRegexBoth.test(cleaned)) {
+        cleaned = cleaned.replace(quoteRegexBoth, '$1').trim();
+      } else {
+        cleaned = cleaned.replace(/^["'«“‘]/, '').replace(/["'»”’]$/, '').trim();
+      }
+
+      const openBrackets = ['「', '『', '（', '【', '《', '<', '['];
+      const closeBrackets = ['」', '』', '）', '】', '》', '>', ']'];
+      
+      const wrongOpenRegex = /^[「『（【《<\[]/;
+      const wrongCloseRegex = /[」』）】》>\]]$/;
+
+      // 원문이 여는 괄호로 시작하면 번역문도 강제로 맞춤
+      for (const open of openBrackets) {
+        if (cleanSourceText.startsWith(open) && !cleaned.startsWith(open)) {
+          if (wrongOpenRegex.test(cleaned)) cleaned = cleaned.replace(wrongOpenRegex, '');
+          cleaned = open + cleaned;
+          break;
+        }
+      }
+      // 원문이 닫는 괄호로 끝나면 번역문도 강제로 맞춤
+      for (const close of closeBrackets) {
+        if (cleanSourceText.endsWith(close) && !cleaned.endsWith(close)) {
+          if (wrongCloseRegex.test(cleaned)) cleaned = cleaned.replace(wrongCloseRegex, '');
+          cleaned = cleaned + close;
+          break;
+        }
       }
 
       // RPG Maker 제어코드 정밀 후처리 (원복)
@@ -1276,6 +1332,44 @@ Original text: "${cleanSourceText}"`;
     const countNewlines = (s: string) => (s.trim().match(/\n/g) || []).length;
     if (countNewlines(jpText) !== countNewlines(koText)) {
       item.validationError = `개행 수 불일치 (원문: ${countNewlines(jpText)}개, 번역: ${countNewlines(koText)}개)`;
+      return;
+    }
+
+    // 5. 영어 및 외계어/한자 환각 검증
+    const stripTags = (s: string) => s.replace(/__TAG_\d+__/g, '');
+    const cleanKo = stripTags(koText);
+    const cleanJp = stripTags(jpText);
+    
+    // 5-1. 영어 알파벳 체크 (원문에 없는데 번역문에 생긴 경우 환각으로 간주)
+    const englishMatch = cleanKo.match(/[a-zA-Z]+/g);
+    if (englishMatch) {
+      const hasUnjustifiedEnglish = englishMatch.some(word => !cleanJp.toLowerCase().includes(word.toLowerCase()));
+      if (hasUnjustifiedEnglish) {
+        item.validationError = `영어 환각 의심 (원문에 없는 알파벳 등장)`;
+        return;
+      }
+    }
+    
+    // 5-2. 아랍어, 키릴문자 등 대표적인 외계어 대역 체크
+    const alienRegex = /[\u0400-\u04FF\u0600-\u06FF\u0E00-\u0E7F\u0900-\u097F]/;
+    if (alienRegex.test(cleanKo)) {
+      item.validationError = `외계어 환각 의심 (비정상적인 문자 포함)`;
+      return;
+    }
+
+    // 5-3. 중국어/한자 환각 체크 (원문에 없는 한자가 생성된 경우)
+    const kanjiMatch = cleanKo.match(/[\u4E00-\u9FFF]/g);
+    if (kanjiMatch) {
+      const hasUnjustifiedKanji = kanjiMatch.some(char => !cleanJp.includes(char));
+      if (hasUnjustifiedKanji) {
+        item.validationError = `한자 잔존 또는 중국어 환각 (원문에 없는 한자)`;
+        return;
+      }
+    }
+
+    // 5-4. 일본어 구두점 잔존 체크 (。 또는 、)
+    if (/[。、]/.test(koText)) {
+      item.validationError = `일본어 구두점 잔존 (。 또는 、)`;
       return;
     }
 
@@ -2385,6 +2479,7 @@ Original text: "${cleanSourceText}"`;
           font-size: 1rem;
           line-height: 1.4;
           margin: 0;
+          white-space: pre-wrap;
         }
       }
 

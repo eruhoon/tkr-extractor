@@ -30,6 +30,83 @@
   let selectedSidebarItem = $state<SidebarItem | null>(null);
   let extractedStrings = $state<ExtractedString[]>([]);
 
+  // 가상 스크롤 및 필터링 상태 추가
+  let scrollTop = $state(0);
+  let viewportHeight = $state(0);
+  let viewportEl = $state<HTMLElement | null>(null);
+  let searchQuery = $state('');
+  let filterMode = $state<'all' | 'untranslated' | 'completed' | 'error'>('all');
+  
+  const estimatedRowHeight = 110;
+  const bufferItems = 5;
+
+  function handleScroll(e: Event) {
+    const target = e.target as HTMLElement;
+    scrollTop = target.scrollTop;
+  }
+
+  // 실시간 필터 및 검색 적용
+  let filteredStrings = $derived.by<ExtractedString[]>(() => {
+    let result = extractedStrings;
+
+    // 1. 필터 모드 적용
+    if (filterMode === 'untranslated') {
+      result = result.filter(item => !item.translatedText || item.translatedText === "번역 실패" || item.translatedText.trim() === "");
+    } else if (filterMode === 'completed') {
+      result = result.filter(item => item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패" && item.translatedText.trim() !== "");
+    } else if (filterMode === 'error') {
+      result = result.filter(item => item.validationError || (item.translatedText === "번역 실패" && item.errorMsg));
+    }
+
+    // 2. 검색어 필터링
+    const query = searchQuery.trim().toLowerCase();
+    if (query) {
+      result = result.filter(item => 
+        item.text.toLowerCase().includes(query) || 
+        (item.translatedText && item.translatedText.toLowerCase().includes(query))
+      );
+    }
+
+    return result;
+  });
+
+  // 카운트용 파생 데이터
+  let untranslatedCount = $derived(
+    extractedStrings.filter(item => !item.translatedText || item.translatedText === "번역 실패" || item.translatedText.trim() === "").length
+  );
+  let completedCount = $derived(
+    extractedStrings.filter(item => item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패" && item.translatedText.trim() !== "").length
+  );
+  let errorCount = $derived(
+    extractedStrings.filter(item => item.validationError || (item.translatedText === "번역 실패" && item.errorMsg)).length
+  );
+
+  // 가상 스크롤 인덱스 및 위치 계산
+  let startIndex = $derived(
+    Math.max(0, Math.floor(scrollTop / estimatedRowHeight) - bufferItems)
+  );
+  let endIndex = $derived(
+    Math.min(
+      filteredStrings.length,
+      Math.ceil((scrollTop + viewportHeight) / estimatedRowHeight) + bufferItems
+    )
+  );
+  let visibleStrings = $derived(
+    filteredStrings.slice(startIndex, endIndex)
+  );
+  let topSpacerHeight = $derived(startIndex * estimatedRowHeight);
+  let totalHeight = $derived(filteredStrings.length * estimatedRowHeight);
+
+  // 검색이나 필터가 변경되면 스크롤을 위로 리셋
+  $effect(() => {
+    const _q = searchQuery;
+    const _m = filterMode;
+    const _s = selectedSidebarItem;
+    if (viewportEl) {
+      viewportEl.scrollTop = 0;
+    }
+  });
+
   let isScriptsFile = $derived(
     originalFilePath.toLowerCase().split(/[/\\]/).pop()?.startsWith('scripts') ?? false
   );
@@ -152,13 +229,13 @@
       id: 'llamacpp:gemma-4-E4B-it', 
       name: 'llama.cpp (Gemma-4 E4B-it)', 
       modelName: 'gemma-4-E4B-it',
-      downloadUrl: 'https://huggingface.co/bartowski/google_gemma-4-E4B-it-GGUF/resolve/main/google_gemma-4-E4B-it-Q4_K_M.gguf'
+      downloadUrl: 'https://huggingface.co/lmstudio-community/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf'
     },
     { 
       id: 'llamacpp:gemma-4-E2B-it', 
       name: 'llama.cpp (Gemma-4 E2B-it)', 
       modelName: 'gemma-4-E2B-it',
-      downloadUrl: 'https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF/resolve/main/google_gemma-4-E2B-it-Q4_K_M.gguf'
+      downloadUrl: 'https://huggingface.co/lmstudio-community/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf'
     },
   ];
   let selectedModelId = $state('ollama:' + 'gemma4:e4b');
@@ -770,6 +847,9 @@
         scripts = [];
         extractedStrings = [];
         selectedSidebarItem = null;
+        scrollTop = 0;
+        searchQuery = '';
+        filterMode = 'all';
         await loadCache();
         await loadGlossary();
         await updateStagedFilesMap();
@@ -848,6 +928,9 @@
 
       selectedSidebarItem = null;
       extractedStrings = [];
+      scrollTop = 0;
+      searchQuery = '';
+      filterMode = 'all';
 
       if (!rvdataFiles.includes(path)) {
         selectedFolder = '';
@@ -884,6 +967,9 @@
         scripts = [];
         extractedStrings = [];
         selectedSidebarItem = null;
+        scrollTop = 0;
+        searchQuery = '';
+        filterMode = 'all';
         await loadCache();
         await loadGlossary();
         await updateStagedFilesMap();
@@ -944,6 +1030,10 @@
     }
     extractedStrings = matches;
 
+    scrollTop = 0;
+    searchQuery = '';
+    filterMode = 'all';
+
     if (cacheApplied) {
       saveCurrentTranslations();
       saveStagedFile();
@@ -954,10 +1044,20 @@
     item.translatedText = "번역 중...";
     extractedStrings = [...extractedStrings];
 
+    // RPG Maker 제어코드 정밀 전처리 (치환)
+    const controlCodeRegex = /([\\₩](?:[a-zA-Z]+(?:\[\d+\])?|[\{\}\*\|\.!\^<>_]))/g;
+    const placeholders: string[] = [];
+    const sourceText = item.text;
+    const cleanSourceText = sourceText.replace(controlCodeRegex, (match) => {
+      const ph = `__TAG_${placeholders.length}__`;
+      placeholders.push(match);
+      return ph;
+    });
+
     let glossaryRules = "";
     if (selectedFolder) {
       const matchedEntries = Object.entries(glossaryData).filter(([jp, ko]) => {
-        return jp && ko && item.text.includes(jp);
+        return jp && ko && sourceText.includes(jp);
       });
       if (matchedEntries.length > 0) {
         glossaryRules = "\nGlossary (Use these exact translations for the matches):\n" +
@@ -971,12 +1071,13 @@ Rules:
 2. Do not explain the translation, just output the exact Korean translation.
 3. Keep proper nouns and context consistent if possible.${glossaryRules}
 4. Preserve all special characters, brackets (e.g. 「 and 」), ellipses (e.g. …… or ......), and punctuation marks from the original text exactly.
-5. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
+5. Preserve placeholders like __TAG_0__, __TAG_1__ exactly in their original relative position. Do NOT translate or remove them.
+6. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
 
-Original text: "${item.text}"`;
+Original text: "${cleanSourceText}"`;
 
     const isLlamaCpp = selectedModelId.startsWith('llamacpp:');
-    addLog(`[번역 요청] 원문: "${item.text}" | 모델: ${selectedModelId}`);
+    addLog(`[번역 요청] 원문: "${sourceText}" | 모델: ${selectedModelId}`);
 
     try {
       let responseText = '';
@@ -1033,9 +1134,16 @@ Original text: "${item.text}"`;
         if (cleaned === before) break;
       }
 
-      // 원문의 앞쪽 공백(들여쓰기) 보존
-      const leadingSpaces = item.text.match(/^\s*/)?.[0] || '';
-      const cleanText = leadingSpaces + cleaned;
+      // RPG Maker 제어코드 정밀 후처리 (원복)
+      for (let i = 0; i < placeholders.length; i++) {
+        const reg = new RegExp(`__\\s*[tT][aA][gG]\\s*_${i}\\s*__`, 'g');
+        cleaned = cleaned.replace(reg, placeholders[i]);
+      }
+
+      // 원문의 앞쪽 공백(들여쓰기) 및 뒤쪽 공백(개행 등) 보존
+      const leadingSpaces = sourceText.match(/^\s*/)?.[0] || '';
+      const trailingSpaces = sourceText.match(/\s*$/)?.[0] || '';
+      const cleanText = leadingSpaces + cleaned + trailingSpaces;
       
       item.translatedText = cleanText;
       item.errorMsg = undefined;
@@ -1130,8 +1238,8 @@ Original text: "${item.text}"`;
       return;
     }
 
-    // 4. 개행 수 불일치
-    const countNewlines = (s: string) => (s.match(/\n/g) || []).length;
+    // 4. 개행 수 불일치 (양끝 개행을 제거한 본문 내부의 개행 수 비교)
+    const countNewlines = (s: string) => (s.trim().match(/\n/g) || []).length;
     if (countNewlines(jpText) !== countNewlines(koText)) {
       item.validationError = `개행 수 불일치 (원문: ${countNewlines(jpText)}개, 번역: ${countNewlines(koText)}개)`;
       return;
@@ -1141,17 +1249,19 @@ Original text: "${item.text}"`;
   }
 
   async function handleBatchValidate() {
-    extractedStrings = extractedStrings.map(item => {
+    const targets = [...filteredStrings]; // 현재 필터링된 항목들만 검증 대상
+    for (const item of targets) {
       validateRow(item);
-      return { ...item };
-    });
-    const errorCount = extractedStrings.filter(i => i.validationError).length;
-    addLog(`[일괄 검증 완료] 문제 항목 ${errorCount}개 발견`);
+    }
+    extractedStrings = [...extractedStrings]; // 반응성 반영
+    
+    const currentErrorCount = targets.filter(i => i.validationError).length;
+    addLog(`[일괄 검증 완료] 검증 대상 중 문제 항목 ${currentErrorCount}개 발견`);
 
-    if (errorCount === 0) {
+    if (currentErrorCount === 0) {
       await message("검증 완료: 발견된 문제 항목이 없습니다! ✅", { title: "검증 완료", kind: "info" });
     } else {
-      await message(`검증 완료: 총 ${errorCount}개의 문제 항목이 발견되었습니다. ⚠️\n(빨간색 테두리와 경고 아이콘을 확인하세요.)`, { title: "검증 완료", kind: "warning" });
+      await message(`검증 완료: 총 ${currentErrorCount}개의 문제 항목이 발견되었습니다. ⚠️\n(빨간색 테두리와 경고 아이콘을 확인하세요.)`, { title: "검증 완료", kind: "warning" });
     }
   }
 
@@ -1164,7 +1274,8 @@ Original text: "${item.text}"`;
   }
 
   async function handleBatchTranslate() {
-    const itemsToTranslate = extractedStrings.filter(i =>
+    // 현재 필터링된 대사들 중에서 미번역/실패/검증오류 항목만 선별하여 일괄 번역 진행
+    const itemsToTranslate = filteredStrings.filter(i =>
       !i.translatedText ||
       i.translatedText === "번역 실패" ||
       i.validationError !== undefined
@@ -1309,10 +1420,17 @@ Original text: "${item.text}"`;
         scripts[idx] = script;
       }
     } else if (selectedSidebarItem.isGroup && selectedSidebarItem.groupEntries) {
+      // 68,000+ 개의 항목을 선형 탐색(findIndex)하면 O(N^2)으로 브라우저가 완전히 프리징됩니다.
+      // O(N)으로 최적화하기 위해 ID -> Index 맵을 사전에 한 번 빌드합니다.
+      const scriptsMap = new Map<number, number>();
+      for (let i = 0; i < scripts.length; i++) {
+        scriptsMap.set(scripts[i].id, i);
+      }
+
       for (const item of extractedStrings) {
         const scriptId = item.id;
-        const idx = scripts.findIndex(s => s.id === scriptId);
-        if (idx !== -1) {
+        const idx = scriptsMap.get(scriptId);
+        if (idx !== undefined) {
           const s = scripts[idx];
           const transMap: { [key: string]: string } = {};
           if (item.translatedText) {
@@ -1620,72 +1738,106 @@ Original text: "${item.text}"`;
         </div>
         {/if}
 
-        <div class="content-body scrollbar-hidden">
-          <div class="strings-list">
-            {#each extractedStrings as item}
-              <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
-                <div class="original-column">
-                  <p class="original-text">{item.text}</p>
-                </div>
-                <div class="translate-column">
-                  <textarea 
-                    class="trans-input" 
-                    class:has-error={item.validationError}
-                    bind:value={item.translatedText} 
-                    placeholder="번역된 내용이 여기에 표시됩니다..."
-                    disabled={item.translatedText === "번역 중..."}
-                    on:blur={() => handleManualTranslationChange(item)}
-                  ></textarea>
-                  {#if item.validationError}
-                    <div class="validation-error-indicator" title={item.validationError}>
-                      ⚠️ {item.validationError}
-                    </div>
-                  {:else if item.translatedText === "번역 실패" && item.errorMsg}
-                    <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
-                      navigator.clipboard.writeText(item.errorMsg || '');
-                      alert("에러 로그가 클립보드에 복사되었습니다!");
-                    }}>
-                      ⚠️ 에러 발생 (로그 복사)
-                    </div>
-                  {/if}
-                </div>
-                <div class="action-column" style="display: flex; flex-direction: row; gap: 0.35rem; align-items: center; justify-content: center; width: 110px;">
-                  <button 
-                    class="btn-small btn-action-icon" 
-                    title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "번역"} 
-                    on:click={() => clickTranslateRow(item)} 
-                  >
-                    {#if item.translatedText === "번역 중..."}
-                      ⏳
-                    {:else}
-                      🤖
+        <!-- 실시간 검색 및 필터 컨트롤 영역 추가 -->
+        <div class="filter-controls-bar">
+          <div class="search-input-wrapper">
+            <span class="search-icon">🔍</span>
+            <input 
+              type="text" 
+              placeholder="대사 원문 또는 번역문 실시간 검색..." 
+              bind:value={searchQuery}
+              class="search-input"
+            />
+            {#if searchQuery}
+              <button class="clear-search-btn" on:click={() => searchQuery = ''}>✕</button>
+            {/if}
+          </div>
+          
+          <div class="filter-select-wrapper">
+            <span class="filter-label">필터:</span>
+            <select bind:value={filterMode} class="filter-select">
+              <option value="all">전체 ({extractedStrings.length})</option>
+              <option value="untranslated">미번역 ({untranslatedCount})</option>
+              <option value="completed">번역 완료 ({completedCount})</option>
+              <option value="error">검증 오류/실패 ({errorCount})</option>
+            </select>
+          </div>
+
+          <div class="scroll-info">
+            검색 결과: <strong style="color: var(--accent-color);">{filteredStrings.length}</strong> / {extractedStrings.length}개
+          </div>
+        </div>
+
+        <div class="content-body scrollbar-hidden" bind:this={viewportEl} bind:clientHeight={viewportHeight} on:scroll={handleScroll}>
+          <div class="strings-list" style="position: relative; height: {totalHeight}px; min-height: 100%; display: block;">
+            <div style="transform: translateY({topSpacerHeight}px); display: flex; flex-direction: column; gap: 0.5rem; width: 100%;">
+              {#each visibleStrings as item (item.id)}
+                <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
+                  <div class="original-column">
+                    <p class="original-text">{item.text}</p>
+                  </div>
+                  <div class="translate-column">
+                    <textarea 
+                      class="trans-input" 
+                      class:has-error={item.validationError}
+                      bind:value={item.translatedText} 
+                      placeholder="번역된 내용이 여기에 표시됩니다..."
+                      disabled={item.translatedText === "번역 중..."}
+                      on:blur={() => handleManualTranslationChange(item)}
+                    ></textarea>
+                    {#if item.validationError}
+                      <div class="validation-error-indicator" title={item.validationError}>
+                        ⚠️ {item.validationError}
+                      </div>
+                    {:else if item.translatedText === "번역 실패" && item.errorMsg}
+                      <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
+                        navigator.clipboard.writeText(item.errorMsg || '');
+                        alert("에러 로그가 클립보드에 복사되었습니다!");
+                      }}>
+                        ⚠️ 에러 발생 (로그 복사)
+                      </div>
                     {/if}
-                  </button>
-                  {#if selectedFolder && item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+                  </div>
+                  <div class="action-column" style="display: flex; flex-direction: row; gap: 0.35rem; align-items: center; justify-content: center; width: 110px;">
                     <button 
-                      class="btn-small btn-action-icon btn-global-replace" 
-                      style="background-color: #6366f1;" 
-                      title="폴더 내 동일 대사 일괄 변경" 
-                      on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} 
-                      disabled={isTranslating}
+                      class="btn-small btn-action-icon" 
+                      title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "번역"} 
+                      on:click={() => clickTranslateRow(item)} 
                     >
-                      🌐
+                      {#if item.translatedText === "번역 중..."}
+                        ⏳
+                      {:else}
+                        🤖
+                      {/if}
                     </button>
-                    <button 
-                      class="btn-small btn-action-icon btn-add-glossary" 
-                      style="background-color: #0d9488;" 
-                      title="용어 사전에 단어 등록" 
-                      on:click={() => addGlossaryDirect(item.text, item.translatedText)} 
-                      disabled={isTranslating}
-                    >
-                      📖
-                    </button>
-                  {/if}
+                    {#if selectedFolder && item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+                      <button 
+                        class="btn-small btn-action-icon btn-global-replace" 
+                        style="background-color: #6366f1;" 
+                        title="폴더 내 동일 대사 일괄 변경" 
+                        on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} 
+                        disabled={isTranslating}
+                      >
+                        🌐
+                      </button>
+                      <button 
+                        class="btn-small btn-action-icon btn-add-glossary" 
+                        style="background-color: #0d9488;" 
+                        title="용어 사전에 단어 등록" 
+                        on:click={() => addGlossaryDirect(item.text, item.translatedText)} 
+                        disabled={isTranslating}
+                      >
+                        📖
+                      </button>
+                    {/if}
+                  </div>
                 </div>
-              </div>
-            {/each}
-            {#if extractedStrings.length === 0}
-              <p class="empty">이 스크립트에는 추출할 일본어 문자열이 없습니다.</p>
+              {/each}
+            </div>
+            {#if filteredStrings.length === 0}
+              <p class="empty" style="position: absolute; top: 2rem; left: 0; right: 0; text-align: center; color: var(--text-secondary);">
+                조건에 맞는 대사가 없습니다.
+              </p>
             {/if}
           </div>
 
@@ -2053,6 +2205,11 @@ Original text: "${item.text}"`;
       background: rgba(6, 30, 20, 0.92);
       border: 1px solid rgba(16, 185, 129, 0.4);
       &::after { border-bottom-color: rgba(16, 185, 129, 0.4); }
+    }
+    &.llama-tooltip-warn {
+      background: rgba(30, 20, 6, 0.92);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      &::after { border-bottom-color: rgba(245, 158, 11, 0.4); }
     }
     &.llama-tooltip-download {
       background: rgba(6, 18, 30, 0.92);
@@ -2509,6 +2666,108 @@ Original text: "${item.text}"`;
     
     &:hover:not(:disabled) {
       transform: scale(1.1);
+    }
+  }
+
+  .filter-controls-bar {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 0.75rem 1.5rem;
+    background: rgba(15, 23, 42, 0.45);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+    
+    .search-input-wrapper {
+      position: relative;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      
+      .search-icon {
+        position: absolute;
+        left: 10px;
+        color: #94a3b8;
+        font-size: 0.9rem;
+      }
+      
+      .search-input {
+        width: 100%;
+        padding: 0.45rem 2rem 0.45rem 2.2rem;
+        background: rgba(0, 0, 0, 0.25);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        color: white;
+        font-size: 0.88rem;
+        transition: all 0.2s ease;
+        
+        &:focus {
+          outline: none;
+          border-color: var(--accent-color);
+          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+        }
+      }
+      
+      .clear-search-btn {
+        position: absolute;
+        right: 8px;
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 50%;
+        font-size: 0.8rem;
+        
+        &:hover {
+          color: white;
+          background: rgba(255, 255, 255, 0.1);
+        }
+      }
+    }
+    
+    .filter-select-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      
+      .filter-label {
+        font-size: 0.85rem;
+        color: #94a3b8;
+        font-weight: 500;
+      }
+      
+      .filter-select {
+        background: rgba(0, 0, 0, 0.25);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        color: #f1f5f9;
+        padding: 0.45rem 1.8rem 0.45rem 0.75rem;
+        font-size: 0.88rem;
+        cursor: pointer;
+        outline: none;
+        transition: all 0.2s ease;
+        appearance: none;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23cbd5e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>");
+        background-repeat: no-repeat;
+        background-position: right 8px center;
+        background-size: 14px;
+        
+        option {
+          background: #1e293b;
+          color: #f1f5f9;
+        }
+        
+        &:focus {
+          border-color: var(--accent-color);
+        }
+      }
+    }
+    
+    .scroll-info {
+      font-size: 0.85rem;
+      color: #94a3b8;
+      white-space: nowrap;
     }
   }
 </style>

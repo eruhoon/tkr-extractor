@@ -1079,6 +1079,8 @@ Original text: "${cleanSourceText}"`;
     const isLlamaCpp = selectedModelId.startsWith('llamacpp:');
     addLog(`[번역 요청] 원문: "${sourceText}" | 모델: ${selectedModelId}`);
 
+    const requestStartTime = Date.now();
+
     try {
       let responseText = '';
 
@@ -1094,7 +1096,8 @@ Original text: "${cleanSourceText}"`;
               { role: "system", content: "You are a professional Japanese to Korean game script translator. Output ONLY the Korean translation, nothing else." },
               { role: "user", content: prompt }
             ],
-            temperature: 0.3,
+            temperature: 0.0,
+            max_tokens: 256,
             stream: false
           })
         });
@@ -1113,6 +1116,11 @@ Original text: "${cleanSourceText}"`;
           body: JSON.stringify({
             model: ollamaModel,
             prompt: prompt,
+            options: {
+              num_ctx: 1024,
+              num_predict: 256,
+              temperature: 0.0
+            },
             stream: false
           })
         });
@@ -1148,7 +1156,8 @@ Original text: "${cleanSourceText}"`;
       item.translatedText = cleanText;
       item.errorMsg = undefined;
       validateRow(item);
-      addLog(`[번역 완료] 결과: "${cleanText}"`);
+      const elapsed = ((Date.now() - requestStartTime) / 1000).toFixed(2);
+      addLog(`[번역 완료] 결과: "${cleanText}" (소요 시간: ${elapsed}초)`);
 
       if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패") {
         cacheData[item.text] = cleanText;

@@ -495,6 +495,7 @@ fn start_llama_server(app: tauri::AppHandle, model_id: String, custom_path: Opti
         "-m", &model_path_str,
         "--port", "8080",
         "-c", "2048",
+        "-np", "1",
     ];
 
     if cfg!(target_os = "windows") {

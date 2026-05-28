@@ -480,6 +480,14 @@
   let newGlossaryKo = $state('');
   let stagedFilesMap = $state<Record<string, 'working' | 'completed' | 'none'>>({});
 
+  let showManualTranslatePanel = $state(false);
+  let manualSourceText = $state('');
+  let manualTranslatedText = $state('');
+  let isManualTranslating = $state(false);
+  let manualTranslateError = $state('');
+  let manualTranslateTime = $state(0);
+  let manualTranslateMode = $state<'normal' | 'detailed'>('normal');
+
   async function checkFileCompletion(filePath: string): Promise<boolean> {
     const filename = filePath.split(/[/\\]/).pop() || '';
     const isScripts = filename.toLowerCase().startsWith('scripts');
@@ -1120,14 +1128,14 @@
     }
   }
 
-  async function handleTranslateRow(item: ExtractedString, signal?: AbortSignal, mode: 'normal' | 'detailed' = 'normal') {
-    item.translatedText = "번역 중...";
-    extractedStrings = [...extractedStrings];
-
+  async function performTranslation(
+    sourceText: string,
+    mode: 'normal' | 'detailed' = 'normal',
+    signal?: AbortSignal
+  ): Promise<string> {
     // RPG Maker 제어코드 정밀 전처리 (치환)
     const controlCodeRegex = /([\\₩](?:[a-zA-Z]+(?:\[\d+\])?|[\{\}\*\|\.!\^<>_]))/g;
     const placeholders: string[] = [];
-    const sourceText = item.text;
     const cleanSourceText = sourceText.replace(controlCodeRegex, (match) => {
       const ph = `__TAG_${placeholders.length}__`;
       placeholders.push(match);
@@ -1141,7 +1149,7 @@
 
     if (isScriptCodeBlock) {
       const lines = processingText.split('\n');
-      const commentRegex = /^\s*#/;;
+      const commentRegex = /^\s*#/;
       const processedLines = lines.map((line) => {
         if (commentRegex.test(line)) {
           const ph = `__COMMENT_LINE_${commentPlaceholders.length}__`;
@@ -1206,202 +1214,203 @@ Original text: "${processingText}"`;
     const isLlamaCpp = selectedModelId.startsWith('llamacpp:');
     addLog(`[번역 요청] 원문: "${sourceText}" | 모드: ${mode === 'detailed' ? '자세히 번역' : '일반'} | 모델: ${selectedModelId}`);
 
+    let responseText = '';
+
+    if (isLlamaCpp) {
+      // llama.cpp 서버 (OpenAI 호환 API)
+      await startLlamaIfNeeded(selectedModelId);
+      const examplePrompt = prompt.replace(processingText, "なるほど。");
+      const systemContent = mode === 'detailed'
+        ? "You are a professional Japanese to Korean game script translator. Analyze the nuance and context of the text, then output the final translation in the specified format."
+        : "You are a professional Japanese to Korean game script translator. Output ONLY the Korean translation, nothing else.";
+      const exampleAssistantResponse = mode === 'detailed'
+        ? "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하거나 동의하는 어조입니다.\n[Korean Translation]: 그렇군요."
+        : "그렇군요.";
+
+      const lcResponse = await fetch("http://127.0.0.1:8080/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal,
+        body: JSON.stringify({
+          messages: [
+            { role: "system", content: systemContent },
+            { role: "user", content: examplePrompt },
+            { role: "assistant", content: exampleAssistantResponse },
+            { role: "user", content: prompt }
+          ],
+          temperature: 0.0,
+          max_tokens: 1024,
+          stream: false
+        })
+      });
+      if (!lcResponse.ok) {
+        throw new Error(`llama.cpp 통신 실패: ${lcResponse.status} ${lcResponse.statusText}`);
+      }
+      const lcResult = await lcResponse.json();
+      responseText = lcResult.choices?.[0]?.message?.content || '';
+    } else {
+      // Ollama API
+      const ollamaModel = selectedModelId.startsWith('ollama:') ? selectedModelId.slice(7) : ollamaModelName;
+      const examplePrompt = prompt.replace(processingText, "なるほど。");
+      const systemContent = mode === 'detailed'
+        ? "You are a professional Japanese to Korean game script translator. You MUST output your translation in the specified format with [Analysis] and [Korean Translation]."
+        : "You are a professional Japanese to Korean game script translator. You MUST output your translation in Korean (한국어) only. Do not use English.";
+      const exampleAssistantResponse = mode === 'detailed'
+        ? "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하는 상황입니다.\n[Korean Translation]: 그렇군요."
+        : "그렇군요.";
+
+      const response = await fetch("http://127.0.0.1:11434/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal,
+        body: JSON.stringify({
+          model: ollamaModel,
+          messages: [
+            { role: "system", content: systemContent },
+            { role: "user", content: examplePrompt },
+            { role: "assistant", content: exampleAssistantResponse },
+            { role: "user", content: prompt }
+          ],
+          options: {
+            num_ctx: 4096,
+            num_predict: 1024,
+            temperature: 0.0
+          },
+          stream: false
+        })
+      });
+      if (!response.ok) {
+        throw new Error(`Ollama 통신 실패: ${response.status} ${response.statusText}`);
+      }
+      const result = await response.json();
+      responseText = result.message?.content || '';
+    }
+    
+    // AI 응답 클리닝: "Korean translation: ..." 등 군더더기 제거
+    let cleaned = responseText.trim();
+
+    if (mode === 'detailed') {
+      const match = cleaned.match(/\[Korean Translation\]\s*:\s*([\s\S]+)$/i);
+      if (match) {
+        cleaned = match[1].trim();
+      } else {
+        // fallback
+        cleaned = cleaned.replace(/\[Analysis\][\s\S]*?\[Korean Translation\]\s*:\s*/i, '').trim();
+      }
+    }
+    
+    // 일본어 구두점(마침표, 쉼표)을 한국어 구두점으로 자동 정규화
+    cleaned = cleaned.replace(/。/g, '.').replace(/、/g, ',');
+
+    const prefixRegex = /^(korean\s+translation|translation|korean|한국어\s*번역|한글\s*번역|번역)\s*[:\-]\s*/i;
+    for (let i = 0; i < 5; i++) {
+      const before = cleaned;
+      cleaned = cleaned.replace(prefixRegex, '').trim();
+      cleaned = cleaned.replace(/^["\u201c](([\s\S]*))["\u201d]$/, '$1').trim();
+      cleaned = cleaned.replace(/^\'(([\s\S]*))\'\ *$/, '$1').trim();
+      if (cleaned === before) break;
+    }
+
+    // 특수기호 동기화 1: 말줄임표(……) 보존
+    if (processingText.includes('……') && !cleaned.includes('……')) {
+      cleaned = cleaned.replace(/\.\.\./g, '……');
+    }
+
+    // 특수기호 동기화 2: 괄호 일치화 (대사가 여러 줄로 나뉘어 단일 괄호만 있는 경우도 처리)
+    const quoteRegexBoth = /^["'«“‘](.*)["'»”’]$/;
+    if (quoteRegexBoth.test(cleaned)) {
+      cleaned = cleaned.replace(quoteRegexBoth, '$1').trim();
+    } else {
+      cleaned = cleaned.replace(/^["'«“‘]/, '').replace(/["'»”’]$/, '').trim();
+    }
+
+    const openBrackets = ['「', '『', '（', '【', '《', '<', '[', '('];
+    const closeBrackets = ['」', '』', '）', '】', '》', '>', ']', ')'];
+    
+    const wrongOpenRegex = /^[「『（【《<\[(]/;
+    const wrongCloseRegex = /[」』）환경?時》>\])]$/;
+
+    // 원문이 여는 괄호로 시작하면 번역문도 강제로 맞춤
+    for (const open of openBrackets) {
+      if (processingText.startsWith(open) && !cleaned.startsWith(open)) {
+        if (wrongOpenRegex.test(cleaned)) cleaned = cleaned.replace(wrongOpenRegex, '');
+        cleaned = open + cleaned;
+        break;
+      }
+    }
+    // 원문이 닫는 괄호로 끝나면 번역문도 강제로 맞춤
+    for (const close of closeBrackets) {
+      if (processingText.endsWith(close) && !cleaned.endsWith(close)) {
+        if (wrongCloseRegex.test(cleaned)) cleaned = cleaned.replace(wrongCloseRegex, '');
+        cleaned = cleaned + close;
+        break;
+      }
+    }
+
+    // 원문에 없는 불필요하게 자동 완성된 괄호 제거
+    for (let i = 0; i < openBrackets.length; i++) {
+      const open = openBrackets[i];
+      const close = closeBrackets[i];
+      
+      if (!processingText.includes(close)) {
+        const escapedClose = close.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const endRegex = new RegExp(`${escapedClose}\\s*([.,?!~₩]*\\s*)$`);
+        if (endRegex.test(cleaned)) {
+          cleaned = cleaned.replace(endRegex, '$1').trim();
+        }
+      }
+      
+      if (!processingText.includes(open)) {
+        const escapedOpen = open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const startRegex = new RegExp(`^(\\s*[.,?!~₩]*\\s*)${escapedOpen}`);
+        if (startRegex.test(cleaned)) {
+          cleaned = cleaned.replace(startRegex, '$1').trim();
+        }
+      }
+    }
+
+    // 글로서리 강제 적용
+    if (selectedFolder) {
+      for (const [jp, ko] of Object.entries(glossaryData)) {
+        if (jp && ko && processingText.includes(jp)) {
+          if (cleaned.includes(jp)) {
+            cleaned = cleaned.replaceAll(jp, ko);
+          }
+          if (jp === '・・・' && !cleaned.includes('・・・')) {
+            cleaned = cleaned.replace(/\.\.\./g, ko).replace(/…/g, ko);
+          } else if (jp === '……' && !cleaned.includes('……')) {
+            cleaned = cleaned.replace(/\.\.\./g, ko).replace(/…/g, ko);
+          }
+        }
+      }
+    }
+
+    // 루비 주석 플레이스홀더 복원 (__COMMENT_LINE_X__)
+    for (let i = 0; i < commentPlaceholders.length; i++) {
+      const reg = new RegExp(`__\\s*[cC][oO][mM][mM][eE][nN][tT]_\\s*[lL][iI][nN][eE]\\s*_${i}\\s*__`, 'g');
+      cleaned = cleaned.replace(reg, commentPlaceholders[i]);
+    }
+
+    // RPG Maker 제어코드 정밀 후처리 (원복)
+    for (let i = 0; i < placeholders.length; i++) {
+      const reg = new RegExp(`__\\s*[tT][aA][gG]\\s*_${i}\\s*__`, 'g');
+      cleaned = cleaned.replace(reg, placeholders[i]);
+    }
+
+    // 원문의 앞쪽 공백(들여쓰기) 및 뒤쪽 공백(개행 등) 보존
+    const leadingSpaces = sourceText.match(/^\s*/)?.[0] || '';
+    const trailingSpaces = sourceText.match(/\s*$/)?.[0] || '';
+    return leadingSpaces + cleaned + trailingSpaces;
+  }
+
+  async function handleTranslateRow(item: ExtractedString, signal?: AbortSignal, mode: 'normal' | 'detailed' = 'normal') {
+    item.translatedText = "번역 중...";
+    extractedStrings = [...extractedStrings];
+
     const requestStartTime = Date.now();
 
     try {
-      let responseText = '';
-
-      if (isLlamaCpp) {
-        // llama.cpp 서버 (OpenAI 호환 API)
-        await startLlamaIfNeeded(selectedModelId);
-        const examplePrompt = prompt.replace(processingText, "なるほど。");
-        const systemContent = mode === 'detailed'
-          ? "You are a professional Japanese to Korean game script translator. Analyze the nuance and context of the text, then output the final translation in the specified format."
-          : "You are a professional Japanese to Korean game script translator. Output ONLY the Korean translation, nothing else.";
-        const exampleAssistantResponse = mode === 'detailed'
-          ? "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하거나 동의하는 어조입니다.\n[Korean Translation]: 그렇군요."
-          : "그렇군요.";
-
-        const lcResponse = await fetch("http://127.0.0.1:8080/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal,
-          body: JSON.stringify({
-            messages: [
-              { role: "system", content: systemContent },
-              { role: "user", content: examplePrompt },
-              { role: "assistant", content: exampleAssistantResponse },
-              { role: "user", content: prompt }
-            ],
-            temperature: 0.0,
-            max_tokens: 1024,
-            stream: false
-          })
-        });
-        if (!lcResponse.ok) {
-          throw new Error(`llama.cpp 통신 실패: ${lcResponse.status} ${lcResponse.statusText}`);
-        }
-        const lcResult = await lcResponse.json();
-        responseText = lcResult.choices?.[0]?.message?.content || '';
-      } else {
-        // Ollama API
-        const ollamaModel = selectedModelId.startsWith('ollama:') ? selectedModelId.slice(7) : ollamaModelName;
-        const examplePrompt = prompt.replace(processingText, "なるほど。");
-        const systemContent = mode === 'detailed'
-          ? "You are a professional Japanese to Korean game script translator. You MUST output your translation in the specified format with [Analysis] and [Korean Translation]."
-          : "You are a professional Japanese to Korean game script translator. You MUST output your translation in Korean (한국어) only. Do not use English.";
-        const exampleAssistantResponse = mode === 'detailed'
-          ? "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하는 상황입니다.\n[Korean Translation]: 그렇군요."
-          : "그렇군요.";
-
-        const response = await fetch("http://127.0.0.1:11434/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal,
-          body: JSON.stringify({
-            model: ollamaModel,
-            messages: [
-              { role: "system", content: systemContent },
-              { role: "user", content: examplePrompt },
-              { role: "assistant", content: exampleAssistantResponse },
-              { role: "user", content: prompt }
-            ],
-            options: {
-              num_ctx: 4096,
-              num_predict: 1024,
-              temperature: 0.0
-            },
-            stream: false
-          })
-        });
-        if (!response.ok) {
-          throw new Error(`Ollama 통신 실패: ${response.status} ${response.statusText}`);
-        }
-        const result = await response.json();
-        responseText = result.message?.content || '';
-      }
-      
-      // AI 응답 클리닝: "Korean translation: ..." 등 군더더기 제거
-      let cleaned = responseText.trim();
-
-      if (mode === 'detailed') {
-        const match = cleaned.match(/\[Korean Translation\]\s*:\s*([\s\S]+)$/i);
-        if (match) {
-          cleaned = match[1].trim();
-        } else {
-          // fallback
-          cleaned = cleaned.replace(/\[Analysis\][\s\S]*?\[Korean Translation\]\s*:\s*/i, '').trim();
-        }
-      }
-      
-      // 일본어 구두점(마침표, 쉼표)을 한국어 구두점으로 자동 정규화
-      cleaned = cleaned.replace(/。/g, '.').replace(/、/g, ',');
-
-      const prefixRegex = /^(korean\s+translation|translation|korean|한국어\s*번역|한글\s*번역|번역)\s*[:\-]\s*/i;
-      for (let i = 0; i < 5; i++) {
-        const before = cleaned;
-        cleaned = cleaned.replace(prefixRegex, '').trim();
-        cleaned = cleaned.replace(/^["\u201c](([\s\S]*))["\u201d]$/, '$1').trim();
-        cleaned = cleaned.replace(/^\'(([\s\S]*))\'\ *$/, '$1').trim();
-        if (cleaned === before) break;
-      }
-
-      // 특수기호 동기화 1: 말줄임표(……) 보존
-      if (processingText.includes('……') && !cleaned.includes('……')) {
-        cleaned = cleaned.replace(/\.\.\./g, '……');
-      }
-
-      // 특수기호 동기화 2: 괄호 일치화 (대사가 여러 줄로 나뉘어 단일 괄호만 있는 경우도 처리)
-      // 번역문에 이상한 서양식 따옴표가 생겼다면 일단 싹 다 벗겨냄
-      const quoteRegexBoth = /^["'«“‘](.*)["'»”’]$/;
-      if (quoteRegexBoth.test(cleaned)) {
-        cleaned = cleaned.replace(quoteRegexBoth, '$1').trim();
-      } else {
-        cleaned = cleaned.replace(/^["'«“‘]/, '').replace(/["'»”’]$/, '').trim();
-      }
-
-      const openBrackets = ['「', '『', '（', '【', '《', '<', '[', '('];
-      const closeBrackets = ['」', '』', '）', '】', '》', '>', ']', ')'];
-      
-      const wrongOpenRegex = /^[「『（【《<\[(]/;
-      const wrongCloseRegex = /[」』）】時》>\])]$/;
-
-      // 원문이 여는 괄호로 시작하면 번역문도 강제로 맞춤
-      for (const open of openBrackets) {
-        if (processingText.startsWith(open) && !cleaned.startsWith(open)) {
-          if (wrongOpenRegex.test(cleaned)) cleaned = cleaned.replace(wrongOpenRegex, '');
-          cleaned = open + cleaned;
-          break;
-        }
-      }
-      // 원문이 닫는 괄호로 끝나면 번역문도 강제로 맞춤
-      for (const close of closeBrackets) {
-        if (processingText.endsWith(close) && !cleaned.endsWith(close)) {
-          if (wrongCloseRegex.test(cleaned)) cleaned = cleaned.replace(wrongCloseRegex, '');
-          cleaned = cleaned + close;
-          break;
-        }
-      }
-
-      // 원문에 없는 불필요하게 자동 완성된 괄호 제거 (예: 원문이 "( 왠지、"로 끝나 닫는 괄호가 없는데 번역에 "(나는)"처럼 생기는 경우 방지)
-      for (let i = 0; i < openBrackets.length; i++) {
-        const open = openBrackets[i];
-        const close = closeBrackets[i];
-        
-        // 원문에 닫는 괄호가 없는데 번역문 끝에 생긴 경우 제거 (구두점이 동반된 경우도 처리)
-        if (!processingText.includes(close)) {
-          const escapedClose = close.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const endRegex = new RegExp(`${escapedClose}\\s*([.,?!~₩]*\\s*)$`);
-          if (endRegex.test(cleaned)) {
-            cleaned = cleaned.replace(endRegex, '$1').trim();
-          }
-        }
-        
-        // 원문에 여는 괄호가 없는데 번역문 시작에 생긴 경우 제거 (구두점이 동반된 경우도 처리)
-        if (!processingText.includes(open)) {
-          const escapedOpen = open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const startRegex = new RegExp(`^(\\s*[.,?!~₩]*\\s*)${escapedOpen}`);
-          if (startRegex.test(cleaned)) {
-            cleaned = cleaned.replace(startRegex, '$1').trim();
-          }
-        }
-      }
-
-      // 글로서리 강제 적용 (LLM이 글로서리를 누락하거나 오번역한 경우 보정)
-      if (selectedFolder) {
-        for (const [jp, ko] of Object.entries(glossaryData)) {
-          if (jp && ko && processingText.includes(jp)) {
-            // 1. 번역문에 일본어 원문(jp)이 그대로 잔존한 경우 교체
-            if (cleaned.includes(jp)) {
-              cleaned = cleaned.replaceAll(jp, ko);
-            }
-            
-            // 2. 특수기호/말줄임표 예외 처리 (원문이 '・・・' 또는 '……' 이고 글로서리에 동일하게 유지하도록 되어있는데 번역문에는 '...' 또는 '…'로 변환된 경우 강제 원복)
-            if (jp === '・・・' && !cleaned.includes('・・・')) {
-              cleaned = cleaned.replace(/\.\.\./g, ko).replace(/…/g, ko);
-            } else if (jp === '……' && !cleaned.includes('……')) {
-              cleaned = cleaned.replace(/\.\.\./g, ko).replace(/…/g, ko);
-            }
-          }
-        }
-      }
-
-      // 루비 주석 플레이스홀더 복원 (__COMMENT_LINE_X__)
-      for (let i = 0; i < commentPlaceholders.length; i++) {
-        const reg = new RegExp(`__\\s*[cC][oO][mM][mM][eE][nN][tT]_\\s*[lL][iI][nN][eE]\\s*_${i}\\s*__`, 'g');
-        cleaned = cleaned.replace(reg, commentPlaceholders[i]);
-      }
-
-      // RPG Maker 제어코드 정밀 후처리 (원복)
-      for (let i = 0; i < placeholders.length; i++) {
-        const reg = new RegExp(`__\\s*[tT][aA][gG]\\s*_${i}\\s*__`, 'g');
-        cleaned = cleaned.replace(reg, placeholders[i]);
-      }
-
-      // 원문의 앞쪽 공백(들여쓰기) 및 뒤쪽 공백(개행 등) 보존
-      const leadingSpaces = sourceText.match(/^\s*/)?.[0] || '';
-      const trailingSpaces = sourceText.match(/\s*$/)?.[0] || '';
-      const cleanText = leadingSpaces + cleaned + trailingSpaces;
+      const cleanText = await performTranslation(item.text, mode, signal);
       
       item.translatedText = cleanText;
       item.errorMsg = undefined;
@@ -1429,6 +1438,30 @@ Original text: "${processingText}"`;
       extractedStrings = [...extractedStrings];
       saveCurrentTranslations();
       await saveStagedFile();
+    }
+  }
+
+  async function runManualTranslation(mode: 'normal' | 'detailed' = 'normal') {
+    if (!manualSourceText.trim()) return;
+
+    isManualTranslating = true;
+    manualTranslateMode = mode;
+    manualTranslateError = '';
+    manualTranslatedText = '번역 중...';
+
+    const requestStartTime = Date.now();
+
+    try {
+      const cleanText = await performTranslation(manualSourceText, mode);
+      manualTranslatedText = cleanText;
+      manualTranslateTime = parseFloat(((Date.now() - requestStartTime) / 1000).toFixed(2));
+    } catch (e: any) {
+      console.error("Manual translation error", e);
+      const errMsg = e?.message || JSON.stringify(e) || String(e);
+      manualTranslateError = errMsg;
+      manualTranslatedText = '번역 실패';
+    } finally {
+      isManualTranslating = false;
     }
   }
 
@@ -1991,7 +2024,10 @@ Original text: "${processingText}"`;
             {/if}
           </h2>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => showGlossaryPanel = !showGlossaryPanel}>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showManualTranslatePanel = !showManualTranslatePanel; if (showManualTranslatePanel) showGlossaryPanel = false; }}>
+              {showManualTranslatePanel ? '⚙️ 번역 테스트 닫기' : '🌐 번역 테스트'}
+            </button>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showGlossaryPanel = !showGlossaryPanel; if (showGlossaryPanel) showManualTranslatePanel = false; }}>
               {showGlossaryPanel ? '📖 용어 사전 닫기' : '📘 용어 사전 관리'}
             </button>
             {#if isTranslating && batchTotal > 0}
@@ -2057,6 +2093,108 @@ Original text: "${processingText}"`;
                 </table>
               {/if}
             </div>
+          </div>
+        </div>
+        {/if}
+
+        <!-- 수동 번역 패널 (고정 헤더 아래에 고정 배치) -->
+        {#if showManualTranslatePanel}
+        <div class="glossary-fixed-container">
+          <div class="manual-translate-panel glass-panel">
+            <div class="manual-translate-header">
+              <h3>🌐 번역 테스트 (Translation Test)</h3>
+              <span style="font-size: 0.8rem; color: #94a3b8; margin-left: 0.5rem;">
+                * 현재 선택된 모델로 텍스트를 즉시 번역 테스트합니다. (글로서리 규칙 자동 적용)
+              </span>
+            </div>
+            
+            <div class="manual-translate-body">
+              <div class="manual-translate-field">
+                <label for="manual-source-input">번역할 문구 (일본어 등)</label>
+                <textarea 
+                  id="manual-source-input"
+                  bind:value={manualSourceText} 
+                  placeholder="번역할 일본어 문구를 입력하세요... (예: んんだけど)" 
+                  class="manual-translate-input"
+                  disabled={isManualTranslating}
+                ></textarea>
+              </div>
+              
+              <div class="manual-translate-actions">
+                <button 
+                  id="manual-translate-btn-normal"
+                  class="btn" 
+                  style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0;"
+                  on:click={() => runManualTranslation('normal')} 
+                  disabled={isManualTranslating || !manualSourceText.trim()}
+                >
+                  {#if isManualTranslating && manualTranslateMode === 'normal'}
+                    ⏳ 번역 중...
+                  {:else}
+                    🤖 일반 번역
+                  {/if}
+                </button>
+                <button 
+                  id="manual-translate-btn-detailed"
+                  class="btn btn-detailed" 
+                  style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0;"
+                  on:click={() => runManualTranslation('detailed')} 
+                  disabled={isManualTranslating || !manualSourceText.trim()}
+                >
+                  {#if isManualTranslating && manualTranslateMode === 'detailed'}
+                    ⏳ 번역 중...
+                  {:else}
+                    ✨ 자세히 번역
+                  {/if}
+                </button>
+                <button 
+                  id="manual-translate-btn-reset"
+                  class="btn" 
+                  style="background-color: #475569; display: flex; align-items: center; justify-content: center; height: 36px; padding: 0;"
+                  on:click={() => { manualSourceText = ''; manualTranslatedText = ''; manualTranslateError = ''; manualTranslateTime = 0; }}
+                  disabled={isManualTranslating}
+                >
+                  초기화
+                </button>
+              </div>
+
+              <div class="manual-translate-field">
+                <label for="manual-output-display" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                  <span>번역된 문구 (한국어)</span>
+                  <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    {#if manualTranslatedText && manualTranslatedText !== '번역 중...' && manualTranslatedText !== '번역 실패'}
+                      <button 
+                        id="manual-translate-copy-btn"
+                        class="btn" 
+                        style="background-color: #10b981; padding: 0 8px; font-size: 0.75rem; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: 500; border: none; cursor: pointer; border-radius: 4px;"
+                        on:click={() => {
+                          navigator.clipboard.writeText(manualTranslatedText);
+                          alert("번역 결과가 클립보드에 복사되었습니다!");
+                        }}
+                      >
+                        📋 복사
+                      </button>
+                    {/if}
+                    {#if manualTranslateTime > 0}
+                      <span style="font-size: 0.75rem; color: #94a3b8;">⏱️ {manualTranslateTime}초 소요</span>
+                    {/if}
+                  </div>
+                </label>
+                <textarea 
+                  id="manual-output-display"
+                  bind:value={manualTranslatedText} 
+                  placeholder="번역 결과가 여기에 표시됩니다..." 
+                  class="manual-translate-output"
+                  readonly
+                ></textarea>
+              </div>
+            </div>
+
+            {#if manualTranslateError}
+              <div class="manual-translate-error">
+                ⚠️ 번역 실패: {manualTranslateError}
+              </div>
+            {/if}
           </div>
         </div>
         {/if}
@@ -2996,6 +3134,94 @@ Original text: "${processingText}"`;
           background: rgba(239, 68, 68, 0.15);
         }
       }
+    }
+  }
+
+  .manual-translate-panel {
+    flex-shrink: 0;
+    height: 250px;
+    display: flex;
+    flex-direction: column;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    padding: 1rem;
+    gap: 0.75rem;
+
+    .manual-translate-header {
+      display: flex;
+      align-items: center;
+      h3 { margin: 0; font-size: 1rem; font-weight: 600; color: #f1f5f9; }
+    }
+
+    .manual-translate-body {
+      display: flex;
+      gap: 1rem;
+      flex: 1;
+      min-height: 0;
+      align-items: stretch;
+    }
+
+    .manual-translate-field {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+
+      label {
+        font-size: 0.8rem;
+        font-weight: 500;
+        color: #94a3b8;
+      }
+
+      textarea {
+        flex: 1;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: white;
+        padding: 0.6rem 0.8rem;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        resize: none;
+        line-height: 1.4;
+
+        &:focus {
+          outline: 2px solid var(--accent-color);
+        }
+        
+        &.manual-translate-output {
+          background: rgba(15, 23, 42, 0.3);
+          color: #e2e8f0;
+        }
+      }
+    }
+
+    .manual-translate-actions {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 0.5rem;
+      width: 120px;
+      flex-shrink: 0;
+      
+      button {
+        height: 36px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+    }
+
+    .manual-translate-error {
+      margin-top: 0.25rem;
+      padding: 0.4rem 0.8rem;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      border-radius: 4px;
+      color: #fca5a5;
+      font-size: 0.8rem;
     }
   }
 

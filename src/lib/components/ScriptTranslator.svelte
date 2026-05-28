@@ -1134,6 +1134,25 @@
       return ph;
     });
 
+    // 루비 주석 라인 (#) 감지 및 치환 (여러 줄이고 스크립트 코드 블록인 경우에만 적용)
+    const commentPlaceholders: string[] = [];
+    let processingText = cleanSourceText;
+    const isScriptCodeBlock = sourceText.includes('\n') && scripts.some(s => s.code === sourceText);
+
+    if (isScriptCodeBlock) {
+      const lines = processingText.split('\n');
+      const commentRegex = /^\s*#/;;
+      const processedLines = lines.map((line) => {
+        if (commentRegex.test(line)) {
+          const ph = `__COMMENT_LINE_${commentPlaceholders.length}__`;
+          commentPlaceholders.push(line);
+          return ph;
+        }
+        return line;
+      });
+      processingText = processedLines.join('\n');
+    }
+
     let glossaryRules = "";
     if (selectedFolder) {
       const matchedEntries = Object.entries(glossaryData).filter(([jp, ko]) => {
@@ -1161,12 +1180,12 @@ Rules:
 3. Preserve all special characters, brackets (e.g. 「 and 」), ellipses (e.g. …… or ......), and punctuation marks from the original text exactly.
 4. Preserve placeholders like __TAG_0__, __TAG_1__ exactly in their original relative position. Do NOT translate or remove them.
 5. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
-6. Preserve line breaks (\n) exactly as they appear in the original text.
+6. Preserve line breaks (\\n) exactly as they appear in the original text.
 7. If a bracket/parenthesis is opened but not closed in the original Japanese text (or vice versa), do NOT attempt to close it or add the missing bracket in the Korean translation. Keep the unbalanced brackets exactly as they are in the original text.
-
+${isScriptCodeBlock ? '8. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
 CRITICAL: The [Korean Translation] section MUST be written in Korean (한국어) only. Do not use English.
 
-Original text: "${cleanSourceText}"`;
+Original text: "${processingText}"`;
     } else {
       prompt = `Translate the following Japanese game script text into Korean. 
 Rules:
@@ -1176,12 +1195,12 @@ Rules:
 4. Preserve all special characters, brackets (e.g. 「 and 」), ellipses (e.g. …… or ......), and punctuation marks from the original text exactly.
 5. Preserve placeholders like __TAG_0__, __TAG_1__ exactly in their original relative position. Do NOT translate or remove them.
 6. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
-7. Preserve line breaks (\n) exactly as they appear in the original text.
+7. Preserve line breaks (\\n) exactly as they appear in the original text.
 8. If a bracket/parenthesis is opened but not closed in the original Japanese text (or vice versa), do NOT attempt to close it or add the missing bracket in the Korean translation. Keep the unbalanced brackets exactly as they are in the original text.
-
+${isScriptCodeBlock ? '9. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
 CRITICAL: The final output MUST be written in Korean (한국어). Do not use English.
 
-Original text: "${cleanSourceText}"`;
+Original text: "${processingText}"`;
     }
 
     const isLlamaCpp = selectedModelId.startsWith('llamacpp:');
@@ -1195,7 +1214,7 @@ Original text: "${cleanSourceText}"`;
       if (isLlamaCpp) {
         // llama.cpp 서버 (OpenAI 호환 API)
         await startLlamaIfNeeded(selectedModelId);
-        const examplePrompt = prompt.replace(cleanSourceText, "なるほど。");
+        const examplePrompt = prompt.replace(processingText, "なるほど。");
         const systemContent = mode === 'detailed'
           ? "You are a professional Japanese to Korean game script translator. Analyze the nuance and context of the text, then output the final translation in the specified format."
           : "You are a professional Japanese to Korean game script translator. Output ONLY the Korean translation, nothing else.";
@@ -1227,7 +1246,7 @@ Original text: "${cleanSourceText}"`;
       } else {
         // Ollama API
         const ollamaModel = selectedModelId.startsWith('ollama:') ? selectedModelId.slice(7) : ollamaModelName;
-        const examplePrompt = prompt.replace(cleanSourceText, "なるほど。");
+        const examplePrompt = prompt.replace(processingText, "なるほど。");
         const systemContent = mode === 'detailed'
           ? "You are a professional Japanese to Korean game script translator. You MUST output your translation in the specified format with [Analysis] and [Korean Translation]."
           : "You are a professional Japanese to Korean game script translator. You MUST output your translation in Korean (한국어) only. Do not use English.";
@@ -1288,7 +1307,7 @@ Original text: "${cleanSourceText}"`;
       }
 
       // 특수기호 동기화 1: 말줄임표(……) 보존
-      if (cleanSourceText.includes('……') && !cleaned.includes('……')) {
+      if (processingText.includes('……') && !cleaned.includes('……')) {
         cleaned = cleaned.replace(/\.\.\./g, '……');
       }
 
@@ -1305,11 +1324,11 @@ Original text: "${cleanSourceText}"`;
       const closeBrackets = ['」', '』', '）', '】', '》', '>', ']', ')'];
       
       const wrongOpenRegex = /^[「『（【《<\[(]/;
-      const wrongCloseRegex = /[」』）】》>\])]$/;
+      const wrongCloseRegex = /[」』）】時》>\])]$/;
 
       // 원문이 여는 괄호로 시작하면 번역문도 강제로 맞춤
       for (const open of openBrackets) {
-        if (cleanSourceText.startsWith(open) && !cleaned.startsWith(open)) {
+        if (processingText.startsWith(open) && !cleaned.startsWith(open)) {
           if (wrongOpenRegex.test(cleaned)) cleaned = cleaned.replace(wrongOpenRegex, '');
           cleaned = open + cleaned;
           break;
@@ -1317,20 +1336,20 @@ Original text: "${cleanSourceText}"`;
       }
       // 원문이 닫는 괄호로 끝나면 번역문도 강제로 맞춤
       for (const close of closeBrackets) {
-        if (cleanSourceText.endsWith(close) && !cleaned.endsWith(close)) {
+        if (processingText.endsWith(close) && !cleaned.endsWith(close)) {
           if (wrongCloseRegex.test(cleaned)) cleaned = cleaned.replace(wrongCloseRegex, '');
           cleaned = cleaned + close;
           break;
         }
       }
 
-      // 원문에 없는 불필요하게 자동 완성된 괄호 제거 (예: 원문이 "( 私は、"로 끝나 닫는 괄호가 없는데 번역에 "(나는)"처럼 생기는 경우 방지)
+      // 원문에 없는 불필요하게 자동 완성된 괄호 제거 (예: 원문이 "( 왠지、"로 끝나 닫는 괄호가 없는데 번역에 "(나는)"처럼 생기는 경우 방지)
       for (let i = 0; i < openBrackets.length; i++) {
         const open = openBrackets[i];
         const close = closeBrackets[i];
         
         // 원문에 닫는 괄호가 없는데 번역문 끝에 생긴 경우 제거 (구두점이 동반된 경우도 처리)
-        if (!cleanSourceText.includes(close)) {
+        if (!processingText.includes(close)) {
           const escapedClose = close.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const endRegex = new RegExp(`${escapedClose}\\s*([.,?!~₩]*\\s*)$`);
           if (endRegex.test(cleaned)) {
@@ -1339,7 +1358,7 @@ Original text: "${cleanSourceText}"`;
         }
         
         // 원문에 여는 괄호가 없는데 번역문 시작에 생긴 경우 제거 (구두점이 동반된 경우도 처리)
-        if (!cleanSourceText.includes(open)) {
+        if (!processingText.includes(open)) {
           const escapedOpen = open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const startRegex = new RegExp(`^(\\s*[.,?!~₩]*\\s*)${escapedOpen}`);
           if (startRegex.test(cleaned)) {
@@ -1351,7 +1370,7 @@ Original text: "${cleanSourceText}"`;
       // 글로서리 강제 적용 (LLM이 글로서리를 누락하거나 오번역한 경우 보정)
       if (selectedFolder) {
         for (const [jp, ko] of Object.entries(glossaryData)) {
-          if (jp && ko && cleanSourceText.includes(jp)) {
+          if (jp && ko && processingText.includes(jp)) {
             // 1. 번역문에 일본어 원문(jp)이 그대로 잔존한 경우 교체
             if (cleaned.includes(jp)) {
               cleaned = cleaned.replaceAll(jp, ko);
@@ -1365,6 +1384,12 @@ Original text: "${cleanSourceText}"`;
             }
           }
         }
+      }
+
+      // 루비 주석 플레이스홀더 복원 (__COMMENT_LINE_X__)
+      for (let i = 0; i < commentPlaceholders.length; i++) {
+        const reg = new RegExp(`__\\s*[cC][oO][mM][mM][eE][nN][tT]_\\s*[lL][iI][nN][eE]\\s*_${i}\\s*__`, 'g');
+        cleaned = cleaned.replace(reg, commentPlaceholders[i]);
       }
 
       // RPG Maker 제어코드 정밀 후처리 (원복)

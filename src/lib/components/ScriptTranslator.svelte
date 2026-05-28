@@ -22,6 +22,7 @@
     originalCodeMatch: string;
     errorMsg?: string;
     validationError?: string;
+    translationTime?: number;
   }
 
   let { isDragging = false } = $props();
@@ -127,12 +128,11 @@
 
     if (isScriptsFile) {
       return scripts.map(s => {
-        const completed = getCompletedCount(s, true);
         return {
           id: s.id,
           title: s.title,
           count: s.count || 0,
-          completedCount: completed,
+          completedCount: s.completedCount || 0,
           isGroup: false,
           scriptRef: s
         };
@@ -151,7 +151,7 @@
 
       // 전체 보기 가상 아이템 추가
       const totalCount = scripts.reduce((acc, curr) => acc + (curr.count || 0), 0);
-      const totalCompleted = scripts.reduce((acc, curr) => acc + getCompletedCount(curr, false), 0);
+      const totalCompleted = scripts.reduce((acc, curr) => acc + (curr.completedCount || 0), 0);
       items.push({
         id: "ALL_ITEMS",
         title: "전체 보기",
@@ -163,7 +163,7 @@
 
       for (const [key, entries] of groupsMap.entries()) {
         const totalCount = entries.reduce((acc, curr) => acc + (curr.count || 0), 0);
-        const completedCount = entries.reduce((acc, curr) => acc + getCompletedCount(curr, false), 0);
+        const completedCount = entries.reduce((acc, curr) => acc + (curr.completedCount || 0), 0);
         items.push({
           id: key,
           title: key,
@@ -784,12 +784,25 @@
           if (s.code && (s.code.includes(`'${originalText}'`) || s.code.includes(`"${originalText}"`))) {
             if (!s.translations) s.translations = {};
             s.translations[originalText] = newTranslatedText;
+            // completedCount 재계산
+            let completed = 0;
+            if (s.jpTexts) {
+              for (let i = 0; i < s.jpTexts.length; i++) {
+                const text = s.jpTexts[i];
+                const trans = s.translations[text];
+                if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                  completed++;
+                }
+              }
+            }
+            s.completedCount = completed;
             currentFileUpdates = true;
           }
         } else {
           if (s.code === originalText) {
             if (!s.translations) s.translations = {};
             s.translations[s.code] = newTranslatedText;
+            s.completedCount = (newTranslatedText && newTranslatedText !== "번역 중..." && newTranslatedText !== "번역 실패" && newTranslatedText.trim() !== "") ? 1 : 0;
             currentFileUpdates = true;
           }
         }
@@ -930,7 +943,27 @@
             jpTexts.push(s.code);
           }
         }
-        return { ...s, count, jpTexts };
+
+        // 초기 completedCount 계산
+        let completedCount = 0;
+        if (s.translations) {
+          if (isScripts) {
+            for (let i = 0; i < jpTexts.length; i++) {
+              const text = jpTexts[i];
+              const trans = s.translations[text];
+              if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                completedCount++;
+              }
+            }
+          } else {
+            const trans = s.translations[s.code];
+            if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+              completedCount = 1;
+            }
+          }
+        }
+
+        return { ...s, count, jpTexts, completedCount };
       });
 
       if (shouldApplyStaged) {
@@ -941,6 +974,25 @@
           for (const s of scripts) {
             if (stagedData[s.id]) {
               s.translations = stagedData[s.id];
+              // staged 복구 후 completedCount 재계산
+              let completed = 0;
+              if (isScripts) {
+                if (s.jpTexts) {
+                  for (let i = 0; i < s.jpTexts.length; i++) {
+                    const text = s.jpTexts[i];
+                    const trans = s.translations[text];
+                    if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                      completed++;
+                    }
+                  }
+                }
+              } else {
+                const trans = s.translations[s.code];
+                if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                  completed = 1;
+                }
+              }
+              s.completedCount = completed;
             }
           }
           addLog("임시 저장된 번역 데이터가 성공적으로 복구되었습니다.");
@@ -1068,7 +1120,7 @@
     }
   }
 
-  async function handleTranslateRow(item: ExtractedString, signal?: AbortSignal) {
+  async function handleTranslateRow(item: ExtractedString, signal?: AbortSignal, mode: 'normal' | 'detailed' = 'normal') {
     item.translatedText = "번역 중...";
     extractedStrings = [...extractedStrings];
 
@@ -1093,7 +1145,30 @@
       }
     }
 
-    const prompt = `Translate the following Japanese game script text into Korean. 
+    let prompt = "";
+    if (mode === 'detailed') {
+      prompt = `Translate the following Japanese game script text into Korean. To ensure the highest quality, you must perform the translation in two steps:
+Step 1: Analyze the Japanese script text. Identify the implied context, character tone, emotions, and subtle nuances (e.g. gender, politeness level, slang, or hidden meaning).
+Step 2: Based on the analysis, write the natural, colloquial, and fluent Korean translation that fits a game dialogue perfectly.
+
+You MUST format your output exactly as follows:
+[Analysis]: <Your brief analysis of the nuance, tone, and context in Korean>
+[Korean Translation]: <Your high-quality Korean translation here>
+
+Rules:
+1. Maintain the meaning and nuance of the original Japanese.
+2. Keep proper nouns and context consistent if possible.${glossaryRules}
+3. Preserve all special characters, brackets (e.g. 「 and 」), ellipses (e.g. …… or ......), and punctuation marks from the original text exactly.
+4. Preserve placeholders like __TAG_0__, __TAG_1__ exactly in their original relative position. Do NOT translate or remove them.
+5. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
+6. Preserve line breaks (\n) exactly as they appear in the original text.
+7. If a bracket/parenthesis is opened but not closed in the original Japanese text (or vice versa), do NOT attempt to close it or add the missing bracket in the Korean translation. Keep the unbalanced brackets exactly as they are in the original text.
+
+CRITICAL: The [Korean Translation] section MUST be written in Korean (한국어) only. Do not use English.
+
+Original text: "${cleanSourceText}"`;
+    } else {
+      prompt = `Translate the following Japanese game script text into Korean. 
 Rules:
 1. Maintain the meaning and nuance of the original Japanese.
 2. Do not explain the translation, just output the exact Korean translation.
@@ -1102,13 +1177,15 @@ Rules:
 5. Preserve placeholders like __TAG_0__, __TAG_1__ exactly in their original relative position. Do NOT translate or remove them.
 6. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
 7. Preserve line breaks (\n) exactly as they appear in the original text.
+8. If a bracket/parenthesis is opened but not closed in the original Japanese text (or vice versa), do NOT attempt to close it or add the missing bracket in the Korean translation. Keep the unbalanced brackets exactly as they are in the original text.
 
 CRITICAL: The final output MUST be written in Korean (한국어). Do not use English.
 
 Original text: "${cleanSourceText}"`;
+    }
 
     const isLlamaCpp = selectedModelId.startsWith('llamacpp:');
-    addLog(`[번역 요청] 원문: "${sourceText}" | 모델: ${selectedModelId}`);
+    addLog(`[번역 요청] 원문: "${sourceText}" | 모드: ${mode === 'detailed' ? '자세히 번역' : '일반'} | 모델: ${selectedModelId}`);
 
     const requestStartTime = Date.now();
 
@@ -1119,15 +1196,22 @@ Original text: "${cleanSourceText}"`;
         // llama.cpp 서버 (OpenAI 호환 API)
         await startLlamaIfNeeded(selectedModelId);
         const examplePrompt = prompt.replace(cleanSourceText, "なるほど。");
+        const systemContent = mode === 'detailed'
+          ? "You are a professional Japanese to Korean game script translator. Analyze the nuance and context of the text, then output the final translation in the specified format."
+          : "You are a professional Japanese to Korean game script translator. Output ONLY the Korean translation, nothing else.";
+        const exampleAssistantResponse = mode === 'detailed'
+          ? "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하거나 동의하는 어조입니다.\n[Korean Translation]: 그렇군요."
+          : "그렇군요.";
+
         const lcResponse = await fetch("http://127.0.0.1:8080/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal,
           body: JSON.stringify({
             messages: [
-              { role: "system", content: "You are a professional Japanese to Korean game script translator. Output ONLY the Korean translation, nothing else." },
+              { role: "system", content: systemContent },
               { role: "user", content: examplePrompt },
-              { role: "assistant", content: "그렇군요." },
+              { role: "assistant", content: exampleAssistantResponse },
               { role: "user", content: prompt }
             ],
             temperature: 0.0,
@@ -1144,6 +1228,13 @@ Original text: "${cleanSourceText}"`;
         // Ollama API
         const ollamaModel = selectedModelId.startsWith('ollama:') ? selectedModelId.slice(7) : ollamaModelName;
         const examplePrompt = prompt.replace(cleanSourceText, "なるほど。");
+        const systemContent = mode === 'detailed'
+          ? "You are a professional Japanese to Korean game script translator. You MUST output your translation in the specified format with [Analysis] and [Korean Translation]."
+          : "You are a professional Japanese to Korean game script translator. You MUST output your translation in Korean (한국어) only. Do not use English.";
+        const exampleAssistantResponse = mode === 'detailed'
+          ? "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하는 상황입니다.\n[Korean Translation]: 그렇군요."
+          : "그렇군요.";
+
         const response = await fetch("http://127.0.0.1:11434/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1151,9 +1242,9 @@ Original text: "${cleanSourceText}"`;
           body: JSON.stringify({
             model: ollamaModel,
             messages: [
-              { role: "system", content: "You are a professional Japanese to Korean game script translator. You MUST output your translation in Korean (한국어) only. Do not use English." },
+              { role: "system", content: systemContent },
               { role: "user", content: examplePrompt },
-              { role: "assistant", content: "그렇군요." },
+              { role: "assistant", content: exampleAssistantResponse },
               { role: "user", content: prompt }
             ],
             options: {
@@ -1173,6 +1264,16 @@ Original text: "${cleanSourceText}"`;
       
       // AI 응답 클리닝: "Korean translation: ..." 등 군더더기 제거
       let cleaned = responseText.trim();
+
+      if (mode === 'detailed') {
+        const match = cleaned.match(/\[Korean Translation\]\s*:\s*([\s\S]+)$/i);
+        if (match) {
+          cleaned = match[1].trim();
+        } else {
+          // fallback
+          cleaned = cleaned.replace(/\[Analysis\][\s\S]*?\[Korean Translation\]\s*:\s*/i, '').trim();
+        }
+      }
       
       // 일본어 구두점(마침표, 쉼표)을 한국어 구두점으로 자동 정규화
       cleaned = cleaned.replace(/。/g, '.').replace(/、/g, ',');
@@ -1223,6 +1324,49 @@ Original text: "${cleanSourceText}"`;
         }
       }
 
+      // 원문에 없는 불필요하게 자동 완성된 괄호 제거 (예: 원문이 "( 私は、"로 끝나 닫는 괄호가 없는데 번역에 "(나는)"처럼 생기는 경우 방지)
+      for (let i = 0; i < openBrackets.length; i++) {
+        const open = openBrackets[i];
+        const close = closeBrackets[i];
+        
+        // 원문에 닫는 괄호가 없는데 번역문 끝에 생긴 경우 제거 (구두점이 동반된 경우도 처리)
+        if (!cleanSourceText.includes(close)) {
+          const escapedClose = close.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const endRegex = new RegExp(`${escapedClose}\\s*([.,?!~₩]*\\s*)$`);
+          if (endRegex.test(cleaned)) {
+            cleaned = cleaned.replace(endRegex, '$1').trim();
+          }
+        }
+        
+        // 원문에 여는 괄호가 없는데 번역문 시작에 생긴 경우 제거 (구두점이 동반된 경우도 처리)
+        if (!cleanSourceText.includes(open)) {
+          const escapedOpen = open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const startRegex = new RegExp(`^(\\s*[.,?!~₩]*\\s*)${escapedOpen}`);
+          if (startRegex.test(cleaned)) {
+            cleaned = cleaned.replace(startRegex, '$1').trim();
+          }
+        }
+      }
+
+      // 글로서리 강제 적용 (LLM이 글로서리를 누락하거나 오번역한 경우 보정)
+      if (selectedFolder) {
+        for (const [jp, ko] of Object.entries(glossaryData)) {
+          if (jp && ko && cleanSourceText.includes(jp)) {
+            // 1. 번역문에 일본어 원문(jp)이 그대로 잔존한 경우 교체
+            if (cleaned.includes(jp)) {
+              cleaned = cleaned.replaceAll(jp, ko);
+            }
+            
+            // 2. 특수기호/말줄임표 예외 처리 (원문이 '・・・' 또는 '……' 이고 글로서리에 동일하게 유지하도록 되어있는데 번역문에는 '...' 또는 '…'로 변환된 경우 강제 원복)
+            if (jp === '・・・' && !cleaned.includes('・・・')) {
+              cleaned = cleaned.replace(/\.\.\./g, ko).replace(/…/g, ko);
+            } else if (jp === '……' && !cleaned.includes('……')) {
+              cleaned = cleaned.replace(/\.\.\./g, ko).replace(/…/g, ko);
+            }
+          }
+        }
+      }
+
       // RPG Maker 제어코드 정밀 후처리 (원복)
       for (let i = 0; i < placeholders.length; i++) {
         const reg = new RegExp(`__\\s*[tT][aA][gG]\\s*_${i}\\s*__`, 'g');
@@ -1238,6 +1382,7 @@ Original text: "${cleanSourceText}"`;
       item.errorMsg = undefined;
       validateRow(item);
       const elapsed = ((Date.now() - requestStartTime) / 1000).toFixed(2);
+      item.translationTime = parseFloat(elapsed);
       addLog(`[번역 완료] 결과: "${cleanText}" (소요 시간: ${elapsed}초)`);
 
       if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패") {
@@ -1281,7 +1426,13 @@ Original text: "${cleanSourceText}"`;
         path: stagedPath,
         content: jsonContent
       });
-      const isCompleted = await checkFileCompletion(originalFilePath);
+      let isCompleted = true;
+      for (const s of scripts) {
+        if (s.count && (s.completedCount || 0) < s.count) {
+          isCompleted = false;
+          break;
+        }
+      }
       stagedFilesMap[originalFilePath] = isCompleted ? 'completed' : 'working';
       addLog(`[임시 저장] 번역 진행 상황이 저장되었습니다: ${stagedPath.split(/[/\\]/).pop()}`);
     } catch (e) {
@@ -1343,9 +1494,12 @@ Original text: "${cleanSourceText}"`;
     const cleanJp = stripTags(jpText);
     
     // 5-1. 영어 알파벳 체크 (원문에 없는데 번역문에 생긴 경우 환각으로 간주)
-    const englishMatch = cleanKo.match(/[a-zA-Z]+/g);
+    // 전각 문자(ｃｍ 등) 및 합침 단일 문자(㎝ 등)를 반각 영어(cm)로 표준화하여 교차 검증합니다.
+    const normKo = cleanKo.normalize('NFKC').toLowerCase();
+    const normJp = cleanJp.normalize('NFKC').toLowerCase();
+    const englishMatch = normKo.match(/[a-zA-Z]+/g);
     if (englishMatch) {
-      const hasUnjustifiedEnglish = englishMatch.some(word => !cleanJp.toLowerCase().includes(word.toLowerCase()));
+      const hasUnjustifiedEnglish = englishMatch.some(word => !normJp.includes(word));
       if (hasUnjustifiedEnglish) {
         item.validationError = `영어 환각 의심 (원문에 없는 알파벳 등장)`;
         return;
@@ -1403,7 +1557,7 @@ Original text: "${cleanSourceText}"`;
     }
   }
 
-  async function handleBatchTranslate() {
+  async function handleBatchTranslate(mode: 'normal' | 'detailed' = 'normal') {
     // 현재 필터링된 대사들 중에서 미번역/실패/검증오류 항목만 선별하여 일괄 번역 진행
     const itemsToTranslate = filteredStrings.filter(i =>
       !i.translatedText ||
@@ -1428,7 +1582,8 @@ Original text: "${cleanSourceText}"`;
         }
 
         // validationError가 있으면 캐시 없이 항상 재번역
-        if (!item.validationError && selectedFolder && cacheData[item.text]) {
+        // 자세히 번역(detailed) 모드인 경우 캐시를 적용하지 않고 재번역하여 고품질 결과를 유도하도록 함
+        if (mode === 'normal' && !item.validationError && selectedFolder && cacheData[item.text]) {
           item.translatedText = cacheData[item.text];
           item.errorMsg = undefined;
           batchCompleted++;
@@ -1438,7 +1593,7 @@ Original text: "${cleanSourceText}"`;
         }
 
         try {
-          await handleTranslateRow(item, translationAbortController.signal);
+          await handleTranslateRow(item, translationAbortController.signal, mode);
         } catch (err: any) {
           if (err.name === 'AbortError' || (err.message && err.message.includes('abort'))) {
             addLog("일괄 번역이 즉시 중지되었습니다.");
@@ -1538,12 +1693,17 @@ Original text: "${cleanSourceText}"`;
     if (!selectedSidebarItem.isGroup && selectedSidebarItem.scriptRef) {
       const script = selectedSidebarItem.scriptRef;
       const transMap: { [key: string]: string } = {};
+      let completed = 0;
       for (const item of extractedStrings) {
         if (item.translatedText) {
           transMap[item.text] = item.translatedText;
+          if (item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패" && item.translatedText.trim() !== "") {
+            completed++;
+          }
         }
       }
       script.translations = transMap;
+      script.completedCount = completed;
       
       const idx = scripts.findIndex(s => s.id === script.id);
       if (idx !== -1) {
@@ -1563,10 +1723,15 @@ Original text: "${cleanSourceText}"`;
         if (idx !== undefined) {
           const s = scripts[idx];
           const transMap: { [key: string]: string } = {};
+          let completed = 0;
           if (item.translatedText) {
             transMap[s.code] = item.translatedText;
+            if (item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패" && item.translatedText.trim() !== "") {
+              completed = 1;
+            }
           }
           s.translations = transMap;
+          s.completedCount = completed;
           scripts[idx] = s;
         }
       }
@@ -1584,7 +1749,7 @@ Original text: "${cleanSourceText}"`;
     await saveStagedFile();
   }
 
-  async function clickTranslateRow(item: ExtractedString) {
+  async function clickTranslateRow(item: ExtractedString, mode: 'normal' | 'detailed' = 'normal') {
     if (item.translatedText === "번역 중...") {
       if (isTranslating && translationAbortController) {
         // 일괄 번역 중인 경우 -> 전체 일괄 번역 취소
@@ -1606,7 +1771,7 @@ Original text: "${cleanSourceText}"`;
     rowAbortControllers.set(item.id, controller);
 
     try {
-      await handleTranslateRow(item, controller.signal);
+      await handleTranslateRow(item, controller.signal, mode);
     } catch (e: any) {
       if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
         console.log(`Row translation aborted for item ${item.id}`);
@@ -1812,8 +1977,11 @@ Original text: "${cleanSourceText}"`;
                 중단하기
               </button>
             {:else}
-              <button class="btn" on:click={handleBatchTranslate} disabled={extractedStrings.length === 0}>
+              <button class="btn" on:click={() => handleBatchTranslate('normal')} disabled={extractedStrings.length === 0}>
                 일괄 번역
+              </button>
+              <button class="btn btn-detailed" on:click={() => handleBatchTranslate('detailed')} disabled={extractedStrings.length === 0}>
+                자세히 번역
               </button>
               <button class="btn" style="background-color: #7c3aed;" on:click={handleBatchValidate} disabled={extractedStrings.length === 0 || isTranslating}>
                 일괄 검증
@@ -1916,7 +2084,7 @@ Original text: "${cleanSourceText}"`;
                       on:blur={() => handleManualTranslationChange(item)}
                     ></textarea>
                     {#if item.validationError}
-                      <div class="validation-error-indicator" title={item.validationError}>
+                      <div class="validation-error-indicator" style="right: {item.translationTime && item.translatedText !== '번역 중...' && item.translatedText !== '번역 실패' ? '115px' : '8px'};" title={item.validationError}>
                         ⚠️ {item.validationError}
                       </div>
                     {:else if item.translatedText === "번역 실패" && item.errorMsg}
@@ -1927,17 +2095,35 @@ Original text: "${cleanSourceText}"`;
                         ⚠️ 에러 발생 (로그 복사)
                       </div>
                     {/if}
+                    {#if item.translationTime && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+                      <div class="time-indicator">
+                        ⏱️ {item.translationTime}초 소요
+                      </div>
+                    {/if}
                   </div>
-                  <div class="action-column" style="display: flex; flex-direction: row; gap: 0.35rem; align-items: center; justify-content: center; width: 110px;">
+                  <div class="action-column" style="display: flex; flex-direction: row; gap: 0.35rem; align-items: center; justify-content: center; width: 140px;">
                     <button 
                       class="btn-small btn-action-icon" 
-                      title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "번역"} 
-                      on:click={() => clickTranslateRow(item)} 
+                      title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "번역 (기본)"} 
+                      on:click={() => clickTranslateRow(item, 'normal')} 
+                      disabled={isTranslating}
                     >
                       {#if item.translatedText === "번역 중..."}
                         ⏳
                       {:else}
                         🤖
+                      {/if}
+                    </button>
+                    <button 
+                      class="btn-small btn-action-icon btn-detailed-translate" 
+                      title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "자세히 번역 (고품질)"} 
+                      on:click={() => clickTranslateRow(item, 'detailed')} 
+                      disabled={isTranslating}
+                    >
+                      {#if item.translatedText === "번역 중..."}
+                        ⏳
+                      {:else}
+                        ✨
                       {/if}
                     </button>
                     {#if selectedFolder && item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
@@ -2451,7 +2637,7 @@ Original text: "${cleanSourceText}"`;
 
     .string-row {
       display: grid;
-      grid-template-columns: 1fr 1fr 110px;
+      grid-template-columns: 1fr 1fr 140px;
       align-items: stretch;
       background: rgba(15, 23, 42, 0.5);
       border: 1px solid var(--border-color);
@@ -2548,6 +2734,25 @@ Original text: "${cleanSourceText}"`;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+          transition: right 0.2s ease;
+        }
+
+        .time-indicator {
+          position: absolute;
+          bottom: 4px;
+          right: 8px;
+          background: rgba(16, 185, 129, 0.15);
+          border: 1px solid rgba(16, 185, 129, 0.4);
+          color: #34d399;
+          font-size: 0.7rem;
+          padding: 0.15rem 0.5rem;
+          border-radius: 4px;
+          z-index: 10;
+          white-space: nowrap;
+          display: flex;
+          align-items: center;
+          gap: 0.25rem;
+          transition: all 0.2s ease;
         }
       }
 
@@ -2780,6 +2985,22 @@ Original text: "${cleanSourceText}"`;
     transition: background-color 0.2s;
     &:hover {
       background-color: #0f766e !important;
+    }
+  }
+
+  .btn-detailed-translate {
+    background-color: #8b5cf6;
+    color: white;
+    transition: background-color 0.2s;
+    &:hover {
+      background-color: #7c3aed !important;
+    }
+  }
+
+  .btn-detailed {
+    background-color: #8b5cf6 !important;
+    &:hover {
+      background-color: #7c3aed !important;
     }
   }
 

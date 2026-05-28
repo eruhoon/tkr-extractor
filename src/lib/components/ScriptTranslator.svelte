@@ -1200,11 +1200,11 @@ Original text: "${cleanSourceText}"`;
         cleaned = cleaned.replace(/^["'«“‘]/, '').replace(/["'»”’]$/, '').trim();
       }
 
-      const openBrackets = ['「', '『', '（', '【', '《', '<', '['];
-      const closeBrackets = ['」', '』', '）', '】', '》', '>', ']'];
+      const openBrackets = ['「', '『', '（', '【', '《', '<', '[', '('];
+      const closeBrackets = ['」', '』', '）', '】', '》', '>', ']', ')'];
       
-      const wrongOpenRegex = /^[「『（【《<\[]/;
-      const wrongCloseRegex = /[」』）】》>\]]$/;
+      const wrongOpenRegex = /^[「『（【《<\[(]/;
+      const wrongCloseRegex = /[」』）】》>\])]$/;
 
       // 원문이 여는 괄호로 시작하면 번역문도 강제로 맞춤
       for (const open of openBrackets) {
@@ -1311,10 +1311,12 @@ Original text: "${cleanSourceText}"`;
     }
 
     // 2. 불완전 번역 (일본어 문자 잔존 여부)
-    const hasJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(koText);
+    // 검증 시 가타카나 가운데 점(・) 및 반각 가운데 점(･)은 허용(제외)하고 체크합니다.
+    const cleanKoForJpCheck = koText.replace(/[・･]/g, '');
+    const hasJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(cleanKoForJpCheck);
     if (hasJapanese) {
       // 원문에도 한자가 있는 경우는 허용 (일본 고유명사 등)
-      const jpOnlyKana = /[\u3040-\u309F\u30A0-\u30FF]/.test(koText);
+      const jpOnlyKana = /[\u3040-\u309F\u30A0-\u30FF]/.test(cleanKoForJpCheck);
       if (jpOnlyKana) {
         item.validationError = `번역 미완료 (일본어 문자 잔존)`;
         return;

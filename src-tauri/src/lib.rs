@@ -437,6 +437,31 @@ fn download_model(app: tauri::AppHandle, model_id: String, url: String) -> Resul
     Ok(())
 }
 
+fn kill_existing_llama_servers() {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("taskkill")
+            .args(&["/F", "/IM", "llama-server.exe"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let _ = Command::new("pkill")
+            .arg("-x")
+            .arg("llama-server")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        let _ = Command::new("killall")
+            .arg("llama-server")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
 #[tauri::command]
 fn start_llama_server(app: tauri::AppHandle, model_id: String, custom_path: Option<String>) -> Result<(), String> {
     let mutex = get_llama_server_mutex();
@@ -446,6 +471,10 @@ fn start_llama_server(app: tauri::AppHandle, model_id: String, custom_path: Opti
     if let Some(mut child) = guard.take() {
         let _ = child.kill();
     }
+
+    // Kill any orphaned llama-server processes from previous sessions
+    kill_existing_llama_servers();
+    std::thread::sleep(std::time::Duration::from_millis(500));
     
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let model_path = app_dir.join("models").join(format!("{}-Q4_K_M.gguf", model_id));
@@ -634,6 +663,11 @@ pub fn run() {
             delete_model,
             check_llama_server_availability
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                stop_llama_server();
+            }
+        });
 }

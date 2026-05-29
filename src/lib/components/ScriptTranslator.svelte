@@ -1847,6 +1847,68 @@ Original text: "${processingText}"`;
     }
   }
 
+  async function clearSearchResultTranslations() {
+    if (filteredStrings.length === 0) return;
+    
+    const itemsToClear = filteredStrings.filter(
+      item => item.translatedText || item.validationError || item.errorMsg
+    );
+    
+    if (itemsToClear.length === 0) {
+      alert("지울 번역 내용이 없습니다.");
+      return;
+    }
+
+    const confirmed = await ask(
+      `현재 검색/필터 결과 중 번역이 작성된 ${itemsToClear.length}개 항목의 번역 내용을 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`,
+      {
+        title: '검색 결과 번역 삭제',
+        kind: 'warning',
+        okLabel: '삭제',
+        cancelLabel: '취소'
+      }
+    );
+
+    if (!confirmed) return;
+
+    let deleteFromCache = false;
+    if (selectedFolder) {
+      const hasCachedItems = itemsToClear.some(item => cacheData[item.text] !== undefined);
+      if (hasCachedItems) {
+        deleteFromCache = await ask(
+          `번역 캐시(cache.json)에서도 해당 항목들의 번역을 함께 삭제하시겠습니까?\n'예'를 선택하면 향후 자동 번역 시 이전 번역이 적용되지 않습니다.`,
+          {
+            title: '번역 캐시 삭제 여부',
+            kind: 'info',
+            okLabel: '예 (캐시도 함께 삭제)',
+            cancelLabel: '아니오 (현재 화면에서만 삭제)'
+          }
+        );
+      }
+    }
+
+    for (const item of itemsToClear) {
+      item.translatedText = '';
+      item.validationError = undefined;
+      item.errorMsg = undefined;
+      item.translationTime = undefined;
+      
+      if (deleteFromCache) {
+        delete cacheData[item.text];
+      }
+    }
+
+    if (deleteFromCache) {
+      await saveCache();
+    }
+
+    saveCurrentTranslations();
+    await saveStagedFile();
+    
+    addLog(`검색 결과 ${itemsToClear.length}개의 번역 내용 삭제 완료`);
+    alert(`검색 결과 ${itemsToClear.length}개의 번역 내용이 삭제되었습니다.`);
+  }
+
   export function getStatus() {
     return { isTranslating, isLoading };
   }
@@ -2236,6 +2298,18 @@ Original text: "${processingText}"`;
           <div class="scroll-info">
             검색 결과: <strong style="color: var(--accent-color);">{filteredStrings.length}</strong> / {extractedStrings.length}개
           </div>
+
+          {#if searchQuery.trim() !== '' || filterMode !== 'all'}
+            <button 
+              type="button" 
+              class="btn-clear-results" 
+              on:click={clearSearchResultTranslations}
+              title="현재 검색/필터 결과의 모든 번역 내용을 지웁니다"
+              disabled={isTranslating}
+            >
+              🗑️ 검색 결과 비우기
+            </button>
+          {/if}
         </div>
 
         <div class="content-body scrollbar-hidden" bind:this={viewportEl} bind:clientHeight={viewportHeight} on:scroll={handleScroll}>
@@ -3566,6 +3640,32 @@ Original text: "${processingText}"`;
       font-size: 0.85rem;
       color: #94a3b8;
       white-space: nowrap;
+    }
+
+    .btn-clear-results {
+      background: rgba(239, 68, 68, 0.12);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      padding: 0.4rem 0.8rem;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+      
+      &:hover:not(:disabled) {
+        background: rgba(239, 68, 68, 0.22);
+        color: white;
+        border-color: rgba(239, 68, 68, 0.45);
+      }
+      
+      &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
     }
   }
 </style>

@@ -11,6 +11,7 @@
     title: string;
     code: string;
     count?: number;
+    completedCount?: number;
     translations?: { [key: string]: string };
     jpTexts?: string[]; // 일본어 문자열 추출 캐시
   }
@@ -23,6 +24,7 @@
     errorMsg?: string;
     validationError?: string;
     translationTime?: number;
+    index?: number;
   }
 
   let { isDragging = false } = $props();
@@ -39,8 +41,9 @@
   let searchQuery = $state('');
   let filterMode = $state<'all' | 'untranslated' | 'completed' | 'error'>('all');
   
-  const estimatedRowHeight = 110;
-  const bufferItems = 5;
+  let showContext = $derived(searchQuery.trim() !== '' || filterMode !== 'all');
+  let estimatedRowHeight = $derived(showContext ? 220 : 110);
+  const bufferItems = 8;
 
   function handleScroll(e: Event) {
     const target = e.target as HTMLElement;
@@ -988,14 +991,14 @@
                 if (s.jpTexts) {
                   for (let i = 0; i < s.jpTexts.length; i++) {
                     const text = s.jpTexts[i];
-                    const trans = s.translations[text];
+                    const trans = s.translations?.[text];
                     if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
                       completed++;
                     }
                   }
                 }
               } else {
-                const trans = s.translations[s.code];
+                const trans = s.translations?.[s.code];
                 if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
                   completed = 1;
                 }
@@ -1116,6 +1119,9 @@
         });
       }
     }
+    matches.forEach((m, idx) => {
+      m.index = idx;
+    });
     extractedStrings = matches;
 
     scrollTop = 0;
@@ -2030,6 +2036,9 @@ Original text: "${processingText}"`;
             <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showGlossaryPanel = !showGlossaryPanel; if (showGlossaryPanel) showManualTranslatePanel = false; }}>
               {showGlossaryPanel ? '📖 용어 사전 닫기' : '📘 용어 사전 관리'}
             </button>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => showDebugPanel = !showDebugPanel}>
+              {showDebugPanel ? '🛠️ 디버그 로그 닫기' : '⚙️ 디버그 로그 보기'}
+            </button>
             {#if isTranslating && batchTotal > 0}
               <span style="color: var(--accent-color); font-weight: bold; white-space: nowrap; font-size: 0.9rem; margin-right: 0.5rem;">
                 {batchCompleted} / {batchTotal} 완료
@@ -2233,84 +2242,195 @@ Original text: "${processingText}"`;
           <div class="strings-list" style="position: relative; height: {totalHeight}px; min-height: 100%; display: block;">
             <div style="transform: translateY({topSpacerHeight}px); display: flex; flex-direction: column; gap: 0.5rem; width: 100%;">
               {#each visibleStrings as item (item.id)}
-                <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
-                  <div class="original-column">
-                    <p class="original-text">{item.text}</p>
-                  </div>
-                  <div class="translate-column">
-                    <textarea 
-                      class="trans-input" 
-                      class:has-error={item.validationError}
-                      bind:value={item.translatedText} 
-                      placeholder="번역된 내용이 여기에 표시됩니다..."
-                      disabled={item.translatedText === "번역 중..."}
-                      on:blur={() => handleManualTranslationChange(item)}
-                    ></textarea>
-                    {#if item.validationError}
-                      <div class="validation-error-indicator" style="right: {item.translationTime && item.translatedText !== '번역 중...' && item.translatedText !== '번역 실패' ? '115px' : '8px'};" title={item.validationError}>
-                        ⚠️ {item.validationError}
-                      </div>
-                    {:else if item.translatedText === "번역 실패" && item.errorMsg}
-                      <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
-                        navigator.clipboard.writeText(item.errorMsg || '');
-                        alert("에러 로그가 클립보드에 복사되었습니다!");
-                      }}>
-                        ⚠️ 에러 발생 (로그 복사)
+                {#if showContext}
+                  {@const prevItem = item.index !== undefined && item.index > 0 ? extractedStrings[item.index - 1] : null}
+                  {@const nextItem = item.index !== undefined && item.index < extractedStrings.length - 1 ? extractedStrings[item.index + 1] : null}
+                  <div class="row-card-container">
+                    {#if prevItem}
+                      <div class="context-row prev-context">
+                        <div class="original-column">
+                          <span class="context-badge-label">이전</span>
+                          <span class="context-text">{prevItem.text}</span>
+                        </div>
+                        <div class="translate-column">
+                          <span class="context-text">{prevItem.translatedText || '(미번역)'}</span>
+                        </div>
+                        <div class="action-column"></div>
                       </div>
                     {/if}
-                    {#if item.translationTime && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
-                      <div class="time-indicator">
-                        ⏱️ {item.translationTime}초 소요
+
+                    <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
+                      <div class="original-column">
+                        <p class="original-text">{item.text}</p>
+                      </div>
+                      <div class="translate-column">
+                        <textarea 
+                          class="trans-input" 
+                          class:has-error={item.validationError}
+                          bind:value={item.translatedText} 
+                          placeholder="번역된 내용이 여기에 표시됩니다..."
+                          disabled={item.translatedText === "번역 중..."}
+                          on:blur={() => handleManualTranslationChange(item)}
+                        ></textarea>
+                        {#if item.validationError}
+                          <div class="validation-error-indicator" style="right: {item.translationTime && item.translatedText !== '번역 중...' && item.translatedText !== '번역 실패' ? '115px' : '8px'};" title={item.validationError}>
+                            ⚠️ {item.validationError}
+                          </div>
+                        {:else if item.translatedText === "번역 실패" && item.errorMsg}
+                          <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
+                            navigator.clipboard.writeText(item.errorMsg || '');
+                            alert("에러 로그가 클립보드에 복사되었습니다!");
+                          }}>
+                            ⚠️ 에러 발생 (로그 복사)
+                          </div>
+                        {/if}
+                        {#if item.translationTime && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+                          <div class="time-indicator">
+                            ⏱️ {item.translationTime}초 소요
+                          </div>
+                        {/if}
+                      </div>
+                      <div class="action-column" style="display: flex; flex-direction: row; gap: 0.35rem; align-items: center; justify-content: center; width: 140px;">
+                        <button 
+                          class="btn-small btn-action-icon" 
+                          title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "번역 (기본)"} 
+                          on:click={() => clickTranslateRow(item, 'normal')} 
+                          disabled={isTranslating}
+                        >
+                          {#if item.translatedText === "번역 중..."}
+                            ⏳
+                          {:else}
+                            🤖
+                          {/if}
+                        </button>
+                        <button 
+                          class="btn-small btn-action-icon btn-detailed-translate" 
+                          title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "자세히 번역 (고품질)"} 
+                          on:click={() => clickTranslateRow(item, 'detailed')} 
+                          disabled={isTranslating}
+                        >
+                          {#if item.translatedText === "번역 중..."}
+                            ⏳
+                          {:else}
+                            ✨
+                          {/if}
+                        </button>
+                        {#if selectedFolder && item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+                          <button 
+                            class="btn-small btn-action-icon btn-global-replace" 
+                            style="background-color: #6366f1;" 
+                            title="폴더 내 동일 대사 일괄 변경" 
+                            on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} 
+                            disabled={isTranslating}
+                          >
+                            🌐
+                          </button>
+                          <button 
+                            class="btn-small btn-action-icon btn-add-glossary" 
+                            style="background-color: #0d9488;" 
+                            title="용어 사전에 단어 등록" 
+                            on:click={() => addGlossaryDirect(item.text, item.translatedText)} 
+                            disabled={isTranslating}
+                          >
+                            📖
+                          </button>
+                        {/if}
+                      </div>
+                    </div>
+
+                    {#if nextItem}
+                      <div class="context-row next-context">
+                        <div class="original-column">
+                          <span class="context-badge-label">이후</span>
+                          <span class="context-text">{nextItem.text}</span>
+                        </div>
+                        <div class="translate-column">
+                          <span class="context-text">{nextItem.translatedText || '(미번역)'}</span>
+                        </div>
+                        <div class="action-column"></div>
                       </div>
                     {/if}
                   </div>
-                  <div class="action-column" style="display: flex; flex-direction: row; gap: 0.35rem; align-items: center; justify-content: center; width: 140px;">
-                    <button 
-                      class="btn-small btn-action-icon" 
-                      title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "번역 (기본)"} 
-                      on:click={() => clickTranslateRow(item, 'normal')} 
-                      disabled={isTranslating}
-                    >
-                      {#if item.translatedText === "번역 중..."}
-                        ⏳
-                      {:else}
-                        🤖
+                {:else}
+                  <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
+                    <div class="original-column">
+                      <p class="original-text">{item.text}</p>
+                    </div>
+                    <div class="translate-column">
+                      <textarea 
+                        class="trans-input" 
+                        class:has-error={item.validationError}
+                        bind:value={item.translatedText} 
+                        placeholder="번역된 내용이 여기에 표시됩니다..."
+                        disabled={item.translatedText === "번역 중..."}
+                        on:blur={() => handleManualTranslationChange(item)}
+                      ></textarea>
+                      {#if item.validationError}
+                        <div class="validation-error-indicator" style="right: {item.translationTime && item.translatedText !== '번역 중...' && item.translatedText !== '번역 실패' ? '115px' : '8px'};" title={item.validationError}>
+                          ⚠️ {item.validationError}
+                        </div>
+                      {:else if item.translatedText === "번역 실패" && item.errorMsg}
+                        <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
+                          navigator.clipboard.writeText(item.errorMsg || '');
+                          alert("에러 로그가 클립보드에 복사되었습니다!");
+                        }}>
+                          ⚠️ 에러 발생 (로그 복사)
+                        </div>
                       {/if}
-                    </button>
-                    <button 
-                      class="btn-small btn-action-icon btn-detailed-translate" 
-                      title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "자세히 번역 (고품질)"} 
-                      on:click={() => clickTranslateRow(item, 'detailed')} 
-                      disabled={isTranslating}
-                    >
-                      {#if item.translatedText === "번역 중..."}
-                        ⏳
-                      {:else}
-                        ✨
+                      {#if item.translationTime && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+                        <div class="time-indicator">
+                          ⏱️ {item.translationTime}초 소요
+                        </div>
                       {/if}
-                    </button>
-                    {#if selectedFolder && item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+                    </div>
+                    <div class="action-column" style="display: flex; flex-direction: row; gap: 0.35rem; align-items: center; justify-content: center; width: 140px;">
                       <button 
-                        class="btn-small btn-action-icon btn-global-replace" 
-                        style="background-color: #6366f1;" 
-                        title="폴더 내 동일 대사 일괄 변경" 
-                        on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} 
+                        class="btn-small btn-action-icon" 
+                        title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "번역 (기본)"} 
+                        on:click={() => clickTranslateRow(item, 'normal')} 
                         disabled={isTranslating}
                       >
-                        🌐
+                        {#if item.translatedText === "번역 중..."}
+                          ⏳
+                        {:else}
+                          🤖
+                        {/if}
                       </button>
                       <button 
-                        class="btn-small btn-action-icon btn-add-glossary" 
-                        style="background-color: #0d9488;" 
-                        title="용어 사전에 단어 등록" 
-                        on:click={() => addGlossaryDirect(item.text, item.translatedText)} 
+                        class="btn-small btn-action-icon btn-detailed-translate" 
+                        title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "자세히 번역 (고품질)"} 
+                        on:click={() => clickTranslateRow(item, 'detailed')} 
                         disabled={isTranslating}
                       >
-                        📖
+                        {#if item.translatedText === "번역 중..."}
+                          ⏳
+                        {:else}
+                          ✨
+                        {/if}
                       </button>
-                    {/if}
+                      {#if selectedFolder && item.translatedText && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
+                        <button 
+                          class="btn-small btn-action-icon btn-global-replace" 
+                          style="background-color: #6366f1;" 
+                          title="폴더 내 동일 대사 일괄 변경" 
+                          on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} 
+                          disabled={isTranslating}
+                        >
+                          🌐
+                        </button>
+                        <button 
+                          class="btn-small btn-action-icon btn-add-glossary" 
+                          style="background-color: #0d9488;" 
+                          title="용어 사전에 단어 등록" 
+                          on:click={() => addGlossaryDirect(item.text, item.translatedText)} 
+                          disabled={isTranslating}
+                        >
+                          📖
+                        </button>
+                      {/if}
+                    </div>
                   </div>
-                </div>
+                {/if}
               {/each}
             </div>
             {#if filteredStrings.length === 0}
@@ -2318,13 +2438,6 @@ Original text: "${processingText}"`;
                 조건에 맞는 대사가 없습니다.
               </p>
             {/if}
-          </div>
-
-          <!-- 디버그 패널 토글 영역 -->
-          <div class="debug-toggle-area" style="text-align: right; padding: 0.5rem; margin-top: 1rem;">
-            <button class="btn-small" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8;" on:click={() => showDebugPanel = !showDebugPanel}>
-              {showDebugPanel ? '디버그 로그 숨기기' : '디버그 로그 보기'}
-            </button>
           </div>
 
           <!-- 디버그 패널 -->
@@ -2925,6 +3038,88 @@ Original text: "${processingText}"`;
         justify-content: center;
         padding: 0.5rem;
         background: rgba(0, 0, 0, 0.15);
+      }
+    }
+
+    .row-card-container {
+      display: flex;
+      flex-direction: column;
+      background: rgba(30, 41, 59, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 8px;
+      padding: 6px;
+      gap: 4px;
+
+      .string-row {
+        background: rgba(15, 23, 42, 0.65);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 6px;
+      }
+    }
+
+    .context-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 140px;
+      align-items: center;
+      background: rgba(15, 23, 42, 0.2);
+      border-radius: 6px;
+      opacity: 0.55;
+      transition: opacity 0.2s ease, background-color 0.2s ease;
+      
+      &:hover {
+        opacity: 0.85;
+        background: rgba(15, 23, 42, 0.35);
+      }
+
+      .original-column, .translate-column {
+        padding: 6px 12px;
+        word-break: break-all;
+        white-space: pre-wrap;
+        line-height: 1.35;
+      }
+
+      .original-column {
+        border-right: 1px solid rgba(255, 255, 255, 0.05);
+        color: #94a3b8;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .translate-column {
+        border-right: 1px solid rgba(255, 255, 255, 0.05);
+        color: #64748b;
+      }
+
+      .action-column {
+        /* empty */
+      }
+
+      .context-badge-label {
+        font-size: 0.65rem;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        flex-shrink: 0;
+      }
+      
+      &.prev-context .context-badge-label {
+        background: rgba(59, 130, 246, 0.15);
+        color: #60a5fa;
+        border: 1px solid rgba(59, 130, 246, 0.2);
+      }
+      
+      &.next-context .context-badge-label {
+        background: rgba(16, 185, 129, 0.15);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.2);
+      }
+
+      .context-text {
+        font-size: 0.8rem;
+        line-height: 1.3;
       }
     }
 

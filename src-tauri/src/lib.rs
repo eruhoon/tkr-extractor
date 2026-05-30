@@ -112,6 +112,9 @@ fn parse_rvdata(path: String) -> Result<Vec<ScriptEntry>, String> {
 
 #[tauri::command]
 fn save_rvdata(original_path: String, new_path: String, updated_scripts: Vec<ScriptEntry>) -> Result<(), String> {
+    if let Some(parent) = std::path::Path::new(&new_path).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     parser::save_rvdata(&original_path, &new_path, updated_scripts)
 }
 
@@ -349,6 +352,15 @@ fn read_staged_json(path: String) -> Result<String, String> {
 #[tauri::command]
 fn is_directory(path: String) -> bool {
     std::path::Path::new(&path).is_dir()
+}
+
+#[tauri::command]
+fn copy_file(src: String, dest: String) -> Result<(), String> {
+    if let Some(parent) = std::path::Path::new(&dest).parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -656,6 +668,7 @@ pub fn run() {
             save_staged_json,
             read_staged_json,
             is_directory,
+            copy_file,
             check_model_exists,
             download_model,
             start_llama_server,

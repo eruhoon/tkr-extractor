@@ -225,6 +225,7 @@
   let batchTotal = $state(0);
   let batchCompleted = $state(0);
   let isLoading = $state(false);
+  let loadingText = $state('데이터 파일을 분석하고 불러오는 중입니다...');
   let selectedFolder = $state('');
   let rvdataFiles = $state<string[]>([]);
   let selectedFileInFolder = $state('');
@@ -875,6 +876,7 @@
       alert("작업 중이거나 로딩 중에는 다른 파일을 불러올 수 없습니다.");
       return;
     }
+    loadingText = '데이터 파일을 분석하고 불러오는 중입니다...';
     isLoading = true;
     
     // Check if path is a directory (e.g. dragged folder)
@@ -1048,6 +1050,7 @@
 
     if (selected && typeof selected === 'string') {
       selectedFolder = selected;
+      loadingText = '데이터 파일을 분석하고 불러오는 중입니다...';
       isLoading = true;
       try {
         const files: string[] = await invoke('get_rvdata_in_folder', { folderPath: selectedFolder });
@@ -1078,6 +1081,36 @@
     if (path) {
       await loadFile(path);
     }
+  }
+
+  async function selectPrevFile() {
+    if (isTranslating || isLoading || rvdataFiles.length <= 1) return;
+    saveCurrentTranslations();
+    const currentIndex = rvdataFiles.indexOf(selectedFileInFolder);
+    let newIndex = 0;
+    if (currentIndex === -1 || currentIndex === 0) {
+      newIndex = rvdataFiles.length - 1;
+    } else {
+      newIndex = currentIndex - 1;
+    }
+    const targetFile = rvdataFiles[newIndex];
+    selectedFileInFolder = targetFile;
+    await loadFile(targetFile);
+  }
+
+  async function selectNextFile() {
+    if (isTranslating || isLoading || rvdataFiles.length <= 1) return;
+    saveCurrentTranslations();
+    const currentIndex = rvdataFiles.indexOf(selectedFileInFolder);
+    let newIndex = 0;
+    if (currentIndex === -1 || currentIndex === rvdataFiles.length - 1) {
+      newIndex = 0;
+    } else {
+      newIndex = currentIndex + 1;
+    }
+    const targetFile = rvdataFiles[newIndex];
+    selectedFileInFolder = targetFile;
+    await loadFile(targetFile);
   }
 
   function selectSidebarItem(item: SidebarItem) {
@@ -1526,8 +1559,8 @@ Original text: "${processingText}"`;
     }
 
     // 2. 불완전 번역 (일본어 문자 잔존 여부)
-    // 검증 시 가타카나 가운데 점(・) 및 반각 가운데 점(･)은 허용(제외)하고 체크합니다.
-    const cleanKoForJpCheck = koText.replace(/[・･]/g, '');
+    // 검증 시 가타카나 가운데 점(・), 반각 가운데 점(･) 및 장음 부호/대시(ー)는 허용(제외)하고 체크합니다.
+    const cleanKoForJpCheck = koText.replace(/[・･ー]/g, '');
     const hasJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(cleanKoForJpCheck);
     if (hasJapanese) {
       // 원문에도 한자가 있는 경우는 허용 (일본 고유명사 등)
@@ -1689,22 +1722,14 @@ Original text: "${processingText}"`;
     }
   }
 
-  async function saveFile() {
-    if (!originalFilePath) return;
-
-    // 현재 선택된 스크립트의 번역 상태를 먼저 저장
-    saveCurrentTranslations();
-
-    const filename = originalFilePath.split(/[/\\]/).pop() || '';
-    const isScripts = filename.toLowerCase().startsWith('scripts');
-
-    const updatedScripts = scripts.map(s => {
+  function buildUpdatedScripts(scriptsList: any[], isScriptsVal: boolean) {
+    return scriptsList.map(s => {
       if (!s.translations || Object.keys(s.translations).length === 0) {
         return { id: s.id, title: s.title, code: s.code };
       }
 
       let newCode = s.code;
-      if (isScripts) {
+      if (isScriptsVal) {
         for (const [originalText, translatedText] of Object.entries(s.translations)) {
           if (translatedText && translatedText !== "번역 중..." && translatedText !== "번역 실패") {
             const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1728,6 +1753,17 @@ Original text: "${processingText}"`;
         code: newCode
       };
     });
+  }
+
+  async function saveFile() {
+    if (!originalFilePath) return;
+
+    // 현재 선택된 스크립트의 번역 상태를 먼저 저장
+    saveCurrentTranslations();
+
+    const filename = originalFilePath.split(/[/\\]/).pop() || '';
+    const isScripts = filename.toLowerCase().startsWith('scripts');
+    const updatedScripts = buildUpdatedScripts(scripts, isScripts);
 
     const newPath = await save({
       defaultPath: originalFilePath.replace('.rvdata', '_translated.rvdata'),
@@ -1748,6 +1784,95 @@ Original text: "${processingText}"`;
       } catch (e) {
         alert('저장 실패: ' + e);
       }
+    }
+  }
+
+  async function saveFolderTranslated() {
+    if (!selectedFolder || rvdataFiles.length === 0) return;
+
+    if (isTranslating || isLoading) {
+      alert("작업 중이거나 로딩 중에는 실행할 수 없습니다.");
+      return;
+    }
+
+    // 현재 작업 중인 파일의 번역 임시 저장
+    saveCurrentTranslations();
+    await saveStagedFile();
+
+    const targetFolder = selectedFolder.replace(/[/\\]+$/, '') + '_translated';
+    
+    loadingText = '폴더 내 모든 데이터를 변환 및 저장하고 있습니다...';
+    isLoading = true;
+    addLog(`[폴더 전체 변환 시작] 대상 폴더: ${targetFolder}`);
+
+    try {
+      // 1. 대상 폴더에 있는 모든 rvdataFiles에 대해 처리
+      for (const filePath of rvdataFiles) {
+        const filename = filePath.split(/[/\\]/).pop() || '';
+        const targetFilePath = `${targetFolder}/${filename}`;
+        
+        // 현재 열려있는 파일인 경우: 메모리 상의 데이터를 기반으로 빌드
+        if (filePath === originalFilePath) {
+          addLog(`[폴더 전체 변환] 현재 파일 처리 중: ${filename}`);
+          const isScripts = filename.toLowerCase().startsWith('scripts');
+          const updated = buildUpdatedScripts(scripts, isScripts);
+          await invoke('save_rvdata', {
+            originalPath: filePath,
+            newPath: targetFilePath,
+            updatedScripts: updated
+          });
+          continue;
+        }
+
+        // 그 외 파일인 경우: _staged.json이 있는지 확인
+        const stagedPath = filePath.replace(/\.(rvdata2?)$/i, '_staged.json');
+        const hasStaged: boolean = await invoke('check_file_exists', { path: stagedPath });
+
+        if (hasStaged) {
+          addLog(`[폴더 전체 변환] 임시 저장본 병합 중: ${filename}`);
+          // 1) original 파일 파싱
+          const loaded: ScriptEntry[] = await invoke('parse_rvdata', { path: filePath });
+          // 2) staged JSON 읽기
+          const jsonContent: string = await invoke('read_staged_json', { path: stagedPath });
+          const stagedData = JSON.parse(jsonContent);
+
+          // 3) 스크립트 객체들의 translations 복구
+          const isScripts = filename.toLowerCase().startsWith('scripts');
+          const mergedScripts = loaded.map(s => {
+            const translations = stagedData[s.id] || {};
+            return {
+              ...s,
+              translations
+            };
+          });
+
+          // 4) 빌드 및 저장
+          const updated = buildUpdatedScripts(mergedScripts, isScripts);
+          await invoke('save_rvdata', {
+            originalPath: filePath,
+            newPath: targetFilePath,
+            updatedScripts: updated
+          });
+        } else {
+          // 변경 사항이 없는 경우: 원본 단순 복사
+          addLog(`[폴더 전체 변환] 변경 없음, 원본 복사: ${filename}`);
+          await invoke('copy_file', { src: filePath, dest: targetFilePath });
+        }
+      }
+
+      addLog(`[폴더 전체 변환 완료] 결과가 성공적으로 저장되었습니다: ${targetFolder}`);
+      await message(`폴더 전체 변환이 성공적으로 완료되었습니다! ✅\n\n저장 경로: ${targetFolder}`, {
+        title: "변환 완료",
+        kind: "info"
+      });
+      // 변환 완료 후 대상 폴더 열기 (Tauri open_folder 이용)
+      await invoke('open_folder', { path: targetFolder });
+    } catch (e: any) {
+      console.error("Folder conversion failed", e);
+      addLog(`[폴더 전체 변환 실패] 오류: ${e}`);
+      alert(`폴더 전체 변환 실패: ${e}`);
+    } finally {
+      isLoading = false;
     }
   }
 
@@ -2012,18 +2137,40 @@ Original text: "${processingText}"`;
       </button>
 
       {#if rvdataFiles.length > 0}
-        <select bind:value={selectedFileInFolder} on:change={handleFolderFileChange} class="api-input" style="width: auto; max-width: 200px; height: 38px; cursor: pointer; padding: 0.55rem 2rem 0.55rem 1rem;" disabled={isTranslating || isLoading}>
-          <option value="">-- 파일 선택 --</option>
-          {#each rvdataFiles as file}
-            <option value={file}>
-              {#if stagedFilesMap[file] === 'completed'}
-                ✅ {file.split(/[/\\]/).pop()} (번역 완료)
-              {:else}
-                {stagedFilesMap[file] === 'working' ? '📝 ' : ''}{file.split(/[/\\]/).pop()}{stagedFilesMap[file] === 'working' ? ' (작업 중)' : ''}
-              {/if}
-            </option>
-          {/each}
-        </select>
+        <div class="file-selector-wrapper" style="display: flex; align-items: center; gap: 0.4rem;">
+          <button 
+            type="button" 
+            class="btn-arrow" 
+            on:click={selectPrevFile} 
+            disabled={isTranslating || isLoading || rvdataFiles.length <= 1} 
+            title="이전 파일"
+          >
+            ◀
+          </button>
+          
+          <select bind:value={selectedFileInFolder} on:change={handleFolderFileChange} class="api-input" style="width: auto; max-width: 200px; height: 38px; cursor: pointer; padding: 0.55rem 2rem 0.55rem 1rem; margin: 0;" disabled={isTranslating || isLoading}>
+            <option value="">-- 파일 선택 --</option>
+            {#each rvdataFiles as file}
+              <option value={file}>
+                {#if stagedFilesMap[file] === 'completed'}
+                  ✅ {file.split(/[/\\]/).pop()} (번역 완료)
+                {:else}
+                  {stagedFilesMap[file] === 'working' ? '📝 ' : ''}{file.split(/[/\\]/).pop()}{stagedFilesMap[file] === 'working' ? ' (작업 중)' : ''}
+                {/if}
+              </option>
+            {/each}
+          </select>
+
+          <button 
+            type="button" 
+            class="btn-arrow" 
+            on:click={selectNextFile} 
+            disabled={isTranslating || isLoading || rvdataFiles.length <= 1} 
+            title="다음 파일"
+          >
+            ▶
+          </button>
+        </div>
       {/if}
 
       {#if selectedFolder}
@@ -2038,6 +2185,11 @@ Original text: "${processingText}"`;
         {/if}
       {/if}
 
+      {#if selectedFolder}
+        <button class="btn btn-success" on:click={saveFolderTranslated} disabled={isTranslating || isLoading || rvdataFiles.length === 0}>
+          폴더 전체 변환/저장
+        </button>
+      {/if}
       <button class="btn btn-success" on:click={saveFile} disabled={scripts.length === 0 || isTranslating || isLoading}>
         복사본으로 변환/저장
       </button>
@@ -2048,7 +2200,7 @@ Original text: "${processingText}"`;
     {#if isLoading}
       <div class="loading-overlay">
         <div class="spinner"></div>
-        <p>데이터 파일을 분석하고 불러오는 중입니다...</p>
+        <p>{loadingText}</p>
       </div>
     {/if}
     <aside class="sidebar glass-panel">
@@ -2773,6 +2925,41 @@ Original text: "${processingText}"`;
     outline: none;
     border-color: var(--accent-color);
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+  }
+
+  .btn-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #cbd5e1;
+    border-radius: 6px;
+    width: 32px;
+    height: 38px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+    padding: 0;
+
+    &:hover:not(:disabled) {
+      background: var(--accent-color);
+      color: white;
+      border-color: var(--accent-hover);
+      box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+      transform: scale(1.05);
+    }
+
+    &:active:not(:disabled) {
+      transform: scale(0.95);
+    }
+
+    &:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
   }
 
   .llama-dot {

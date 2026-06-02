@@ -13,7 +13,11 @@
   let scriptTranslatorRef = $state<any>(null);
   let imageTranslatorRef = $state<any>(null);
 
+  let showSettingsModal = $state(false);
+  let confirmStagedLoad = $state(false);
+
   onMount(() => {
+    confirmStagedLoad = localStorage.getItem('confirmStagedLoad') === 'true';
     let unlistenDragEnter: (() => void) | undefined;
     let unlistenDragLeave: (() => void) | undefined;
     let unlistenDrop: (() => void) | undefined;
@@ -86,6 +90,10 @@
       imageTranslatorRef.handleFileOrFolderSelect(path);
     }
   }
+
+  function toggleConfirmStagedLoad() {
+    localStorage.setItem('confirmStagedLoad', confirmStagedLoad ? 'true' : 'false');
+  }
 </script>
 
 <div class="app-layout">
@@ -113,7 +121,44 @@
         <span class="icon">🖼️</span> 이미지 번역
       </button>
     </div>
+
+    <button 
+      class="settings-btn" 
+      on:click={() => showSettingsModal = true}
+      title="전체 설정"
+    >
+      <span class="icon">⚙️</span>
+    </button>
   </nav>
+
+  <!-- 설정 모달 -->
+  {#if showSettingsModal}
+    <div class="modal-backdrop" on:click={() => showSettingsModal = false} role="presentation">
+      <div class="modal-content glass-panel" on:click|stopPropagation role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <h2>⚙️ 전체 설정</h2>
+          <button class="close-btn" on:click={() => showSettingsModal = false}>✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="setting-item">
+            <div class="setting-info">
+              <span class="setting-title">임시 저장 발견 시 매번 확인</span>
+              <span class="setting-desc">비활성화 시 임시 저장 파일(_staged.json)이 있을 때 묻지 않고 자동으로 이어서 작업합니다.</span>
+            </div>
+            <label class="switch" for="confirm-staged-load-checkbox">
+              <input 
+                id="confirm-staged-load-checkbox"
+                type="checkbox" 
+                bind:checked={confirmStagedLoad} 
+                on:change={toggleConfirmStagedLoad}
+              >
+              <span class="slider round"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <div class="tab-content">
     <!-- 드래그 오버레이 활성 탭 및 바인딩 전달 -->
@@ -162,6 +207,7 @@
   .tabs-nav {
     display: flex;
     justify-content: center;
+    position: relative;
     padding: 0.5rem;
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -174,6 +220,195 @@
     background: rgba(0, 0, 0, 0.2);
     padding: 0.25rem;
     border-radius: 8px;
+  }
+
+  .settings-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 38px;
+    height: 38px;
+    border-radius: 6px;
+
+    .icon {
+      font-size: 1.25rem;
+      display: inline-block;
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.25);
+      color: white;
+
+      .icon {
+        transform: rotate(45deg);
+      }
+    }
+    
+    &:active {
+      transform: translateY(-50%) scale(0.92);
+    }
+  }
+
+  /* 모달 스타일 */
+  .modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(15, 23, 42, 0.65);
+    backdrop-filter: blur(8px);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.2s ease-out;
+  }
+
+  .modal-content {
+    background: rgba(30, 41, 59, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    width: 480px;
+    max-width: 90%;
+    padding: 1.5rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    transform: translateY(0);
+    animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      padding-bottom: 0.75rem;
+
+      h2 {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #f8fafc;
+      }
+
+      .close-btn {
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        font-size: 1.2rem;
+        cursor: pointer;
+        transition: color 0.2s;
+
+        &:hover {
+          color: white;
+        }
+      }
+    }
+  }
+
+  .modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .setting-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+
+    .setting-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      max-width: 80%;
+
+      .setting-title {
+        font-size: 0.95rem;
+        font-weight: 500;
+        color: #e2e8f0;
+      }
+
+      .setting-desc {
+        font-size: 0.82rem;
+        color: #94a3b8;
+        line-height: 1.4;
+      }
+    }
+  }
+
+  /* 스위치 토글 디자인 */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+
+    input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+  }
+
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #475569;
+    transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 24px;
+
+    &::before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+  }
+
+  input:checked + .slider {
+    background-color: #3b82f6;
+  }
+
+  input:focus + .slider {
+    box-shadow: 0 0 1px #3b82f6;
+  }
+
+  input:checked + .slider::before {
+    transform: translateX(20px);
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(12px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
   }
 
   .tab-btn {

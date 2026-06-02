@@ -917,15 +917,21 @@
       const hasStaged: boolean = await invoke('check_file_exists', { path: stagedPath });
       addLog(`임시 파일 감지 결과: ${hasStaged} | 경로: ${stagedPath.split(/[/\\]/).pop()}`);
       if (hasStaged) {
-        const confirmLoad = await ask(
-          `이전에 작업하던 임시 저장 파일(_staged)이 존재합니다. 이어서 작업하시겠습니까?\n\n임시 파일: ${stagedPath.split(/[/\\]/).pop()}`,
-          { title: '임시 저장 불러오기', kind: 'info', okLabel: '이어서 작업', cancelLabel: '원본 불러오기' }
-        );
-        if (confirmLoad) {
-          shouldApplyStaged = true;
-          addLog("임시 번역 진행 상황(_staged.json)을 이어서 적용합니다.");
+        const confirmStagedLoad = localStorage.getItem('confirmStagedLoad') === 'true';
+        if (confirmStagedLoad) {
+          const confirmLoad = await ask(
+            `이전에 작업하던 임시 저장 파일(_staged)이 존재합니다. 이어서 작업하시겠습니까?\n\n임시 파일: ${stagedPath.split(/[/\\]/).pop()}`,
+            { title: '임시 저장 불러오기', kind: 'info', okLabel: '이어서 작업', cancelLabel: '원본 불러오기' }
+          );
+          if (confirmLoad) {
+            shouldApplyStaged = true;
+            addLog("임시 번역 진행 상황(_staged.json)을 이어서 적용합니다.");
+          } else {
+            addLog("원본 파일을 새로 불러옵니다.");
+          }
         } else {
-          addLog("원본 파일을 새로 불러옵니다.");
+          shouldApplyStaged = true;
+          addLog("임시 번역 진행 상황(_staged.json)을 자동으로 이어서 적용합니다.");
         }
       }
     } catch (err) {
@@ -1925,6 +1931,7 @@ Original text: "${processingText}"`;
         }
       }
     }
+    scripts = [...scripts];
   }
 
   async function handleManualTranslationChange(item: ExtractedString) {

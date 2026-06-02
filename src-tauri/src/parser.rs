@@ -8,7 +8,7 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ScriptEntry {
-    pub id: i32,
+    pub id: i64,
     pub title: String,
     pub code: String,
 }
@@ -177,7 +177,7 @@ fn parse_scripts(value: Value) -> Result<Vec<ScriptEntry>, String> {
             if let Value::Array(script_tuple) = item {
                 if script_tuple.len() >= 3 {
                     let id = match &script_tuple[0] {
-                        Value::Integer(i) => *i,
+                        Value::Integer(i) => *i as i64,
                         _ => 0,
                     };
 
@@ -239,7 +239,7 @@ fn save_scripts(value: &mut Value, updated_scripts: Vec<ScriptEntry>) -> Result<
             if let Value::Array(ref mut script_tuple) = item {
                 if script_tuple.len() >= 3 {
                     let id = match &script_tuple[0] {
-                        Value::Integer(i) => *i,
+                        Value::Integer(i) => *i as i64,
                         _ => -1,
                     };
 
@@ -314,7 +314,7 @@ fn parse_map_events(value: Value) -> Result<Vec<ScriptEntry>, String> {
                                         if let Some(text) = get_string_value(&params[0]) {
                                             if has_japanese(&text) {
                                                 // ID 인코딩: event_id, page_idx, cmd_idx 조합
-                                                let entry_id = event_id * 1_000_000 + (page_idx as i32) * 10_000 + (cmd_idx as i32);
+                                                let entry_id = (event_id as i64) * 1_000_000_000 + (page_idx as i64) * 1_000_000 + (cmd_idx as i64);
                                                 entries.push(ScriptEntry {
                                                     id: entry_id,
                                                     title: format!("Event {} (Page {}) - Line {}", event_id, page_idx + 1, cmd_idx),
@@ -342,9 +342,9 @@ fn save_map_events(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> Resu
 
     if let Value::Hash(events_hash) = events_val {
         for entry in updated_entries {
-            let event_id = entry.id / 1_000_000;
-            let page_idx = (entry.id % 1_000_000) / 10_000;
-            let cmd_idx = entry.id % 10_000;
+            let event_id = (entry.id / 1_000_000_000) as i32;
+            let page_idx = ((entry.id % 1_000_000_000) / 1_000_000) as i32;
+            let cmd_idx = (entry.id % 1_000_000) as i32;
 
             if let Some(event_val) = events_hash.get_mut(&Value::Integer(event_id)) {
                 let event_fields = get_fields_mut(event_val)?;
@@ -400,7 +400,7 @@ fn parse_common_events(value: Value) -> Result<Vec<ScriptEntry>, String> {
                                         if !params.is_empty() {
                                             if let Some(text) = get_string_value(&params[0]) {
                                                 if has_japanese(&text) {
-                                                    let entry_id = (event_idx as i32) * 10_000 + (cmd_idx as i32);
+                                                    let entry_id = (event_idx as i64) * 1_000_000 + (cmd_idx as i64);
                                                     entries.push(ScriptEntry {
                                                         id: entry_id,
                                                         title: format!("CommonEvent {} - Line {}", event_idx, cmd_idx),
@@ -425,8 +425,8 @@ fn parse_common_events(value: Value) -> Result<Vec<ScriptEntry>, String> {
 fn save_common_events(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> Result<(), String> {
     if let Value::Array(arr) = value {
         for entry in updated_entries {
-            let event_idx = entry.id / 10_000;
-            let cmd_idx = entry.id % 10_000;
+            let event_idx = (entry.id / 1_000_000) as usize;
+            let cmd_idx = (entry.id % 1_000_000) as usize;
 
             if let Some(event_val) = arr.get_mut(event_idx as usize) {
                 if let Ok(fields) = get_fields_mut(event_val) {
@@ -464,7 +464,7 @@ fn parse_database_items(value: Value, type_name: &str) -> Result<Vec<ScriptEntry
                 if let Some(name_val) = fields.get(&Symbol::from("@name")) {
                     if let Some(name) = get_string_value(name_val) {
                         if has_japanese(&name) {
-                            let entry_id = (item_idx as i32) * 10 + 1;
+                            let entry_id = (item_idx as i64) * 10 + 1;
                             entries.push(ScriptEntry {
                                 id: entry_id,
                                 title: format!("{} {} [Name]", type_name, item_idx),
@@ -484,7 +484,7 @@ fn parse_database_items(value: Value, type_name: &str) -> Result<Vec<ScriptEntry
                 if let Some(desc_val) = fields.get(&desc_symbol) {
                     if let Some(desc) = get_string_value(desc_val) {
                         if has_japanese(&desc) {
-                            let entry_id = (item_idx as i32) * 10 + 2;
+                            let entry_id = (item_idx as i64) * 10 + 2;
                             entries.push(ScriptEntry {
                                 id: entry_id,
                                 title: format!("{} {} [Description]", type_name, item_idx),
@@ -503,7 +503,7 @@ fn parse_database_items(value: Value, type_name: &str) -> Result<Vec<ScriptEntry
 fn save_database_items(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> Result<(), String> {
     if let Value::Array(arr) = value {
         for entry in updated_entries {
-            let item_idx = entry.id / 10;
+            let item_idx = (entry.id / 10) as usize;
             let field_type = entry.id % 10; // 1 = name, 2 = description/profile
 
             if let Some(item_val) = arr.get_mut(item_idx as usize) {

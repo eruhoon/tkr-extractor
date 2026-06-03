@@ -14,6 +14,7 @@
     completedCount?: number;
     translations?: { [key: string]: string };
     jpTexts?: string[]; // 일본어 문자열 추출 캐시
+    hasValidationError?: boolean;
   }
 
   interface ExtractedString {
@@ -33,6 +34,14 @@
   let scripts = $state<ScriptEntry[]>([]);
   let selectedSidebarItem = $state<SidebarItem | null>(null);
   let extractedStrings = $state<ExtractedString[]>([]);
+
+  let isValidating = $state(false);
+  let showValidationProgress = $state(false);
+  let validationProgressCurrent = $state(0);
+  let validationProgressTotal = $state(0);
+
+  let loadingProgressCurrent = $state(0);
+  let loadingProgressTotal = $state(0);
 
   // 가상 스크롤 및 필터링 상태 추가
   let scrollTop = $state(0);
@@ -131,6 +140,7 @@
     isGroup: boolean;
     scriptRef?: ScriptEntry;
     groupEntries?: ScriptEntry[];
+    hasValidationError?: boolean;
   }
 
   let sidebarItems = $derived.by<SidebarItem[]>(() => {
@@ -144,7 +154,8 @@
           count: s.count || 0,
           completedCount: s.completedCount || 0,
           isGroup: false,
-          scriptRef: s
+          scriptRef: s,
+          hasValidationError: s.hasValidationError || false
         };
       });
     } else {
@@ -162,25 +173,29 @@
       // 전체 보기 가상 아이템 추가
       const totalCount = scripts.reduce((acc, curr) => acc + (curr.count || 0), 0);
       const totalCompleted = scripts.reduce((acc, curr) => acc + (curr.completedCount || 0), 0);
+      const anyValidationError = scripts.some(s => s.hasValidationError);
       items.push({
         id: "ALL_ITEMS",
         title: "전체 보기",
         count: totalCount,
         completedCount: totalCompleted,
         isGroup: true,
-        groupEntries: scripts
+        groupEntries: scripts,
+        hasValidationError: anyValidationError
       });
 
       for (const [key, entries] of groupsMap.entries()) {
         const totalCount = entries.reduce((acc, curr) => acc + (curr.count || 0), 0);
         const completedCount = entries.reduce((acc, curr) => acc + (curr.completedCount || 0), 0);
+        const hasError = entries.some(s => s.hasValidationError);
         items.push({
           id: key,
           title: key,
           count: totalCount,
           completedCount: completedCount,
           isGroup: true,
-          groupEntries: entries
+          groupEntries: entries,
+          hasValidationError: hasError
         });
       }
       return items;
@@ -815,6 +830,7 @@
               }
             }
             s.completedCount = completed;
+            s.hasValidationError = checkScriptEntryValidationError(s, isScripts);
             currentFileUpdates = true;
           }
         } else {
@@ -822,6 +838,7 @@
             if (!s.translations) s.translations = {};
             s.translations[s.code] = newTranslatedText;
             s.completedCount = (newTranslatedText && newTranslatedText !== "번역 중..." && newTranslatedText !== "번역 실패" && newTranslatedText.trim() !== "") ? 1 : 0;
+            s.hasValidationError = checkScriptEntryValidationError(s, isScripts);
             currentFileUpdates = true;
           }
         }
@@ -952,74 +969,104 @@
       const isScripts = filename.toLowerCase().startsWith('scripts');
       
       const loaded: ScriptEntry[] = await invoke('parse_rvdata', { path });
-      scripts = loaded.map(s => {
-        let count = 0;
-        const jpTexts: string[] = [];
-        if (isScripts) {
-          const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
-          let match;
-          while ((match = jpRegex.exec(s.code)) !== null) {
-            const text = match[1] || match[2] || '';
-            jpTexts.push(text);
-          }
-          count = jpTexts.length;
-        } else {
-          count = s.code ? 1 : 0;
-          if (s.code) {
-            jpTexts.push(s.code);
-          }
-        }
+      
+      loadingProgressTotal = loaded.length;
+      loadingProgressCurrent = 0;
+      loadingText = '데이터 파일을 분석하고 불러오는 중입니다...';
 
-        // 초기 completedCount 계산
-        let completedCount = 0;
-        if (s.translations) {
+      const mappedScripts: ScriptEntry[] = [];
+      const chunkSize = 1000;
+      
+      for (let i = 0; i < loaded.length; i += chunkSize) {
+        const chunk = loaded.slice(i, i + chunkSize);
+        for (const s of chunk) {
+          let count = 0;
+          const jpTexts: string[] = [];
           if (isScripts) {
-            for (let i = 0; i < jpTexts.length; i++) {
-              const text = jpTexts[i];
-              const trans = s.translations[text];
+            const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+            let match;
+            while ((match = jpRegex.exec(s.code)) !== null) {
+              const text = match[1] || match[2] || '';
+              jpTexts.push(text);
+            }
+            count = jpTexts.length;
+          } else {
+            count = s.code ? 1 : 0;
+            if (s.code) {
+              jpTexts.push(s.code);
+            }
+          }
+
+          // 초기 completedCount 계산
+          let completedCount = 0;
+          if (s.translations) {
+            if (isScripts) {
+              for (let j = 0; j < jpTexts.length; j++) {
+                const text = jpTexts[j];
+                const trans = s.translations[text];
+                if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                  completedCount++;
+                }
+              }
+            } else {
+              const trans = s.translations[s.code];
               if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
-                completedCount++;
+                completedCount = 1;
               }
             }
-          } else {
-            const trans = s.translations[s.code];
-            if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
-              completedCount = 1;
-            }
           }
-        }
 
-        return { ...s, count, jpTexts, completedCount };
-      });
+          const entry = { ...s, count, jpTexts, completedCount };
+          entry.hasValidationError = checkScriptEntryValidationError(entry, isScripts);
+          mappedScripts.push(entry);
+        }
+        
+        loadingProgressCurrent = Math.min(loaded.length, i + chunkSize);
+        // UI가 갱신될 수 있도록 메인 스레드 양보
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      scripts = mappedScripts;
 
       if (shouldApplyStaged) {
         try {
           const jsonContent: string = await invoke('read_staged_json', { path: stagedPath });
           const stagedData = JSON.parse(jsonContent);
           
-          for (const s of scripts) {
-            if (stagedData[s.id]) {
-              s.translations = stagedData[s.id];
-              // staged 복구 후 completedCount 재계산
-              let completed = 0;
-              if (isScripts) {
-                if (s.jpTexts) {
-                  for (let i = 0; i < s.jpTexts.length; i++) {
-                    const text = s.jpTexts[i];
-                    const trans = s.translations?.[text];
-                    if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
-                      completed++;
+          loadingProgressTotal = scripts.length;
+          loadingProgressCurrent = 0;
+          loadingText = '임시 저장된 번역 데이터를 복구하는 중입니다...';
+
+          for (let i = 0; i < scripts.length; i += chunkSize) {
+            const chunk = scripts.slice(i, i + chunkSize);
+            for (const s of chunk) {
+              if (stagedData[s.id]) {
+                s.translations = stagedData[s.id];
+                // staged 복구 후 completedCount 재계산
+                let completed = 0;
+                if (isScripts) {
+                  if (s.jpTexts) {
+                    for (let j = 0; j < s.jpTexts.length; j++) {
+                      const text = s.jpTexts[j];
+                      const trans = s.translations?.[text];
+                      if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                        completed++;
+                      }
                     }
                   }
+                } else {
+                  const trans = s.translations?.[s.code];
+                  if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                    completed = 1;
+                  }
                 }
-              } else {
-                const trans = s.translations?.[s.code];
-                if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
-                  completed = 1;
-                }
+                s.completedCount = completed;
+                s.hasValidationError = checkScriptEntryValidationError(s, isScripts);
               }
-              s.completedCount = completed;
             }
+            
+            loadingProgressCurrent = Math.min(scripts.length, i + chunkSize);
+            // UI가 갱신될 수 있도록 메인 스레드 양보
+            await new Promise(resolve => setTimeout(resolve, 0));
           }
           addLog("임시 저장된 번역 데이터가 성공적으로 복구되었습니다.");
         } catch (jsonErr) {
@@ -1167,6 +1214,7 @@
     }
     matches.forEach((m, idx) => {
       m.index = idx;
+      validateRow(m);
     });
     extractedStrings = matches;
 
@@ -1551,51 +1599,41 @@ Original text: "${processingText}"`;
     }
   }
 
-  function validateRow(item: ExtractedString) {
-    if (!item.translatedText || item.translatedText === "번역 중..." || item.translatedText === "번역 실패") {
-      item.validationError = undefined;
-      return;
+  function getValidationError(jpText: string, koText: string): string | undefined {
+    if (!koText || koText === "번역 중..." || koText === "번역 실패" || koText.trim() === "") {
+      return undefined;
     }
-
-    const jpText = item.text;
-    const koText = item.translatedText;
 
     // 1. 용어 사전 미참조 검증
     if (selectedFolder) {
       const matchedEntries = Object.entries(glossaryData).filter(([jp]) => jp && jpText.includes(jp));
       for (const [jp, ko] of matchedEntries) {
         if (!koText.includes(ko)) {
-          item.validationError = `용어 사전 미참조 ("${jp}" → "${ko}")`;
-          return;
+          return `용어 사전 미참조 ("${jp}" → "${ko}")`;
         }
       }
     }
 
     // 2. 불완전 번역 (일본어 문자 잔존 여부)
-    // 검증 시 가타카나 가운데 점(・), 반각 가운데 점(･) 및 장음 부호/대시(ー)는 허용(제외)하고 체크합니다.
     const cleanKoForJpCheck = koText.replace(/[・･ー]/g, '');
     const hasJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(cleanKoForJpCheck);
     if (hasJapanese) {
-      // 원문에도 한자가 있는 경우는 허용 (일본 고유명사 등)
       const jpOnlyKana = /[\u3040-\u309F\u30A0-\u30FF]/.test(cleanKoForJpCheck);
       if (jpOnlyKana) {
-        item.validationError = `번역 미완료 (일본어 문자 잔존)`;
-        return;
+        return `번역 미완료 (일본어 문자 잔존)`;
       }
     }
 
-    // 3. 불필요한 접두사 잔존 (Korean translation: 등)
+    // 3. 불필요한 접두사 잔존
     const prefixCheck = /^(korean\s+translation|translation|korean|한국어\s*번역|한글\s*번역)\s*[:\-]/i;
     if (prefixCheck.test(koText.trim())) {
-      item.validationError = `불필요한 접두사 잔존`;
-      return;
+      return `불필요한 접두사 잔존`;
     }
 
-    // 4. 개행 수 불일치 (양끝 개행을 제거한 본문 내부의 개행 수 비교)
+    // 4. 개행 수 불일치
     const countNewlines = (s: string) => (s.trim().match(/\n/g) || []).length;
     if (countNewlines(jpText) !== countNewlines(koText)) {
-      item.validationError = `개행 수 불일치 (원문: ${countNewlines(jpText)}개, 번역: ${countNewlines(koText)}개)`;
-      return;
+      return `개행 수 불일치 (원문: ${countNewlines(jpText)}개, 번역: ${countNewlines(koText)}개)`;
     }
 
     // 5. 영어 및 외계어/한자 환각 검증
@@ -1603,59 +1641,118 @@ Original text: "${processingText}"`;
     const cleanKo = stripTags(koText);
     const cleanJp = stripTags(jpText);
     
-    // 5-1. 영어 알파벳 체크 (원문에 없는데 번역문에 생긴 경우 환각으로 간주)
-    // 전각 문자(ｃｍ 등) 및 합침 단일 문자(㎝ 등)를 반각 영어(cm)로 표준화하여 교차 검증합니다.
+    // 5-1. 영어 알파벳 체크
     const normKo = cleanKo.normalize('NFKC').toLowerCase();
     const normJp = cleanJp.normalize('NFKC').toLowerCase();
     const englishMatch = normKo.match(/[a-zA-Z]+/g);
     if (englishMatch) {
       const hasUnjustifiedEnglish = englishMatch.some(word => !normJp.includes(word));
       if (hasUnjustifiedEnglish) {
-        item.validationError = `영어 환각 의심 (원문에 없는 알파벳 등장)`;
-        return;
+        return `영어 환각 의심 (원문에 없는 알파벳 등장)`;
       }
     }
     
-    // 5-2. 아랍어, 키릴문자 등 대표적인 외계어 대역 체크
+    // 5-2. 외계어 대역 체크
     const alienRegex = /[\u0400-\u04FF\u0600-\u06FF\u0E00-\u0E7F\u0900-\u097F]/;
     if (alienRegex.test(cleanKo)) {
-      item.validationError = `외계어 환각 의심 (비정상적인 문자 포함)`;
-      return;
+      return `외계어 환각 의심 (비정상적인 문자 포함)`;
     }
 
-    // 5-3. 중국어/한자 환각 체크 (원문에 없는 한자가 생성된 경우)
+    // 5-3. 중국어/한자 환각 체크
     const kanjiMatch = cleanKo.match(/[\u4E00-\u9FFF]/g);
     if (kanjiMatch) {
       const hasUnjustifiedKanji = kanjiMatch.some(char => !cleanJp.includes(char));
       if (hasUnjustifiedKanji) {
-        item.validationError = `한자 잔존 또는 중국어 환각 (원문에 없는 한자)`;
-        return;
+        return `한자 잔존 또는 중국어 환각 (원문에 없는 한자)`;
       }
     }
 
-    // 5-4. 일본어 구두점 잔존 체크 (。 또는 、)
+    // 5-4. 일본어 구두점 잔존 체크
     if (/[。、]/.test(koText)) {
-      item.validationError = `일본어 구두점 잔존 (。 또는 、)`;
-      return;
+      return `일본어 구두점 잔존 (。 또는 、)`;
     }
 
-    item.validationError = undefined;
+    return undefined;
+  }
+
+  function checkScriptEntryValidationError(s: ScriptEntry, isScripts: boolean): boolean {
+    if (!s.translations) return false;
+    
+    if (isScripts) {
+      if (s.jpTexts) {
+        for (let i = 0; i < s.jpTexts.length; i++) {
+          const text = s.jpTexts[i];
+          const trans = s.translations[text];
+          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+            if (getValidationError(text, trans) !== undefined) {
+              return true;
+            }
+          }
+        }
+      }
+    } else {
+      const trans = s.translations[s.code];
+      if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+        if (getValidationError(s.code, trans) !== undefined) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function validateRow(item: ExtractedString) {
+    item.validationError = getValidationError(item.text, item.translatedText);
   }
 
   async function handleBatchValidate() {
     const targets = [...filteredStrings]; // 현재 필터링된 항목들만 검증 대상
-    for (const item of targets) {
-      validateRow(item);
-    }
-    extractedStrings = [...extractedStrings]; // 반응성 반영
-    
-    const currentErrorCount = targets.filter(i => i.validationError).length;
-    addLog(`[일괄 검증 완료] 검증 대상 중 문제 항목 ${currentErrorCount}개 발견`);
+    const total = targets.length;
+    if (total === 0) return;
 
-    if (currentErrorCount === 0) {
-      await message("검증 완료: 발견된 문제 항목이 없습니다! ✅", { title: "검증 완료", kind: "info" });
-    } else {
-      await message(`검증 완료: 총 ${currentErrorCount}개의 문제 항목이 발견되었습니다. ⚠️\n(빨간색 테두리와 경고 아이콘을 확인하세요.)`, { title: "검증 완료", kind: "warning" });
+    isValidating = true;
+    showValidationProgress = false;
+    validationProgressCurrent = 0;
+    validationProgressTotal = total;
+
+    // 1초 뒤에도 완료되지 않으면 프로그레스바 표시
+    const progressTimer = setTimeout(() => {
+      if (isValidating) {
+        showValidationProgress = true;
+      }
+    }, 1000);
+
+    try {
+      const chunkSize = 2000;
+      for (let i = 0; i < total; i += chunkSize) {
+        const chunk = targets.slice(i, i + chunkSize);
+        for (const item of chunk) {
+          validateRow(item);
+        }
+        validationProgressCurrent = Math.min(total, i + chunkSize);
+        extractedStrings = [...extractedStrings]; // 반응성 반영
+        
+        // 브라우저 메인 스레드에 제어권 양보 (UI 렌더링 허용)
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      
+      saveCurrentTranslations();
+      
+      const currentErrorCount = targets.filter(i => i.validationError).length;
+      addLog(`[일괄 검증 완료] 검증 대상 중 문제 항목 ${currentErrorCount}개 발견`);
+
+      if (currentErrorCount === 0) {
+        await message("검증 완료: 발견된 문제 항목이 없습니다! ✅", { title: "검증 완료", kind: "info" });
+      } else {
+        await message(`검증 완료: 총 ${currentErrorCount}개의 문제 항목이 발견되었습니다. ⚠️\n(빨간색 테두리와 경고 아이콘을 확인하세요.)`, { title: "검증 완료", kind: "warning" });
+      }
+    } catch (e) {
+      console.error("Batch validation error", e);
+      addLog("일괄 검증 오류: " + String(e));
+    } finally {
+      clearTimeout(progressTimer);
+      isValidating = false;
+      showValidationProgress = false;
     }
   }
 
@@ -1906,6 +2003,7 @@ Original text: "${processingText}"`;
       }
       script.translations = transMap;
       script.completedCount = completed;
+      script.hasValidationError = checkScriptEntryValidationError(script, isScriptsFile);
       
       const idx = scripts.findIndex(s => s.id === script.id);
       if (idx !== -1) {
@@ -1934,6 +2032,7 @@ Original text: "${processingText}"`;
           }
           s.translations = transMap;
           s.completedCount = completed;
+          s.hasValidationError = checkScriptEntryValidationError(s, false);
           scripts[idx] = s;
         }
       }
@@ -2146,7 +2245,7 @@ Original text: "${processingText}"`;
     </div>
 
     <div class="header-actions" style="display: flex; align-items: center; gap: 0.8rem;">
-      <button class="btn" on:click={openFolder} disabled={isLoading || isTranslating}>
+      <button class="btn" on:click={openFolder} disabled={isLoading || isTranslating || isValidating}>
         {isLoading ? '불러오는 중...' : '📂 폴더 열기'}
       </button>
 
@@ -2156,13 +2255,13 @@ Original text: "${processingText}"`;
             type="button" 
             class="btn-arrow" 
             on:click={selectPrevFile} 
-            disabled={isTranslating || isLoading || rvdataFiles.length <= 1} 
+            disabled={isTranslating || isLoading || rvdataFiles.length <= 1 || isValidating} 
             title="이전 파일"
           >
             ◀
           </button>
           
-          <select bind:value={selectedFileInFolder} on:change={handleFolderFileChange} class="api-input" style="width: auto; max-width: 200px; height: 38px; cursor: pointer; padding: 0.55rem 2rem 0.55rem 1rem; margin: 0;" disabled={isTranslating || isLoading}>
+          <select bind:value={selectedFileInFolder} on:change={handleFolderFileChange} class="api-input" style="width: auto; max-width: 200px; height: 38px; cursor: pointer; padding: 0.55rem 2rem 0.55rem 1rem; margin: 0;" disabled={isTranslating || isLoading || isValidating}>
             <option value="">-- 파일 선택 --</option>
             {#each rvdataFiles as file}
               <option value={file}>
@@ -2179,7 +2278,7 @@ Original text: "${processingText}"`;
             type="button" 
             class="btn-arrow" 
             on:click={selectNextFile} 
-            disabled={isTranslating || isLoading || rvdataFiles.length <= 1} 
+            disabled={isTranslating || isLoading || rvdataFiles.length <= 1 || isValidating} 
             title="다음 파일"
           >
             ▶
@@ -2200,11 +2299,11 @@ Original text: "${processingText}"`;
       {/if}
 
       {#if selectedFolder}
-        <button class="btn btn-success" on:click={saveFolderTranslated} disabled={isTranslating || isLoading || rvdataFiles.length === 0}>
+        <button class="btn btn-success" on:click={saveFolderTranslated} disabled={isTranslating || isLoading || rvdataFiles.length === 0 || isValidating}>
           폴더 전체 변환/저장
         </button>
       {/if}
-      <button class="btn btn-success" on:click={saveFile} disabled={scripts.length === 0 || isTranslating || isLoading}>
+      <button class="btn btn-success" on:click={saveFile} disabled={scripts.length === 0 || isTranslating || isLoading || isValidating}>
         복사본으로 변환/저장
       </button>
     </div>
@@ -2214,7 +2313,28 @@ Original text: "${processingText}"`;
     {#if isLoading}
       <div class="loading-overlay">
         <div class="spinner"></div>
-        <p>{loadingText}</p>
+        <p style="font-weight: 500; font-size: 1.1rem; margin-top: 1rem;">{loadingText}</p>
+        {#if loadingProgressTotal > 0}
+          <p style="margin-top: 0.5rem; font-size: 0.95rem; color: #94a3b8;">
+            {loadingProgressCurrent} / {loadingProgressTotal} ({Math.round((loadingProgressCurrent / loadingProgressTotal) * 100)}%)
+          </p>
+          <div class="loading-progress-bar-container" style="width: 250px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 999px; margin-top: 0.5rem; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);">
+            <div class="loading-progress-bar" style="height: 100%; width: {(loadingProgressCurrent / loadingProgressTotal) * 100}%; background: linear-gradient(to right, #3b82f6, #60a5fa); transition: width 0.05s ease; border-radius: 999px;"></div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    {#if showValidationProgress}
+      <div class="loading-overlay">
+        <div class="spinner" style="border-top-color: #7c3aed;"></div>
+        <h3 style="margin-top: 1rem; color: #a78bfa; font-weight: 600;">데이터 검증 진행 중...</h3>
+        <p style="margin-top: 0.5rem; font-size: 1.1rem; font-weight: 500;">
+          {validationProgressCurrent} / {validationProgressTotal}개 항목 완료 ({Math.round((validationProgressCurrent / validationProgressTotal) * 100)}%)
+        </p>
+        <div class="validation-progress-bar-container" style="width: 300px; height: 8px; background: rgba(255,255,255,0.1); border-radius: 999px; margin-top: 1rem; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);">
+          <div class="validation-progress-bar" style="height: 100%; width: {(validationProgressCurrent / validationProgressTotal) * 100}%; background: linear-gradient(to right, #7c3aed, #a78bfa); transition: width 0.1s ease; border-radius: 999px;"></div>
+        </div>
       </div>
     {/if}
     <aside class="sidebar glass-panel">
@@ -2236,7 +2356,7 @@ Original text: "${processingText}"`;
             <span class="id">{idx}</span>
             <span class="title">{item.title || 'Untitled'}</span>
             {#if item.count !== undefined && item.count > 0}
-              <span class="count-badge" class:fully-translated={item.completedCount === item.count}>
+              <span class="count-badge" class:fully-translated={item.completedCount === item.count} class:has-validation-error={item.hasValidationError}>
                 {item.completedCount}/{item.count}
               </span>
             {/if}
@@ -2258,13 +2378,13 @@ Original text: "${processingText}"`;
             {/if}
           </h2>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showManualTranslatePanel = !showManualTranslatePanel; if (showManualTranslatePanel) { showGlossaryPanel = false; showDebugPanel = false; } }}>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showManualTranslatePanel = !showManualTranslatePanel; if (showManualTranslatePanel) { showGlossaryPanel = false; showDebugPanel = false; } }} disabled={isValidating || isTranslating || isLoading}>
               {showManualTranslatePanel ? '⚙️ 번역 테스트 닫기' : '🌐 번역 테스트'}
             </button>
-            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showGlossaryPanel = !showGlossaryPanel; if (showGlossaryPanel) { showManualTranslatePanel = false; showDebugPanel = false; } }}>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showGlossaryPanel = !showGlossaryPanel; if (showGlossaryPanel) { showManualTranslatePanel = false; showDebugPanel = false; } }} disabled={isValidating || isTranslating || isLoading}>
               {showGlossaryPanel ? '📖 용어 사전 닫기' : '📘 용어 사전 관리'}
             </button>
-            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showDebugPanel = !showDebugPanel; if (showDebugPanel) { showManualTranslatePanel = false; showGlossaryPanel = false; } }}>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showDebugPanel = !showDebugPanel; if (showDebugPanel) { showManualTranslatePanel = false; showGlossaryPanel = false; } }} disabled={isValidating || isTranslating || isLoading}>
               {showDebugPanel ? '🛠️ 디버그 로그 닫기' : '⚙️ 디버그 로그 보기'}
             </button>
             {#if isTranslating && batchTotal > 0}
@@ -2275,13 +2395,13 @@ Original text: "${processingText}"`;
                 중단하기
               </button>
             {:else}
-              <button class="btn" on:click={() => handleBatchTranslate('normal')} disabled={extractedStrings.length === 0}>
+              <button class="btn" on:click={() => handleBatchTranslate('normal')} disabled={extractedStrings.length === 0 || isValidating || isLoading}>
                 일괄 번역
               </button>
-              <button class="btn btn-detailed" on:click={() => handleBatchTranslate('detailed')} disabled={extractedStrings.length === 0}>
+              <button class="btn btn-detailed" on:click={() => handleBatchTranslate('detailed')} disabled={extractedStrings.length === 0 || isValidating || isLoading}>
                 자세히 번역
               </button>
-              <button class="btn" style="background-color: #7c3aed;" on:click={handleBatchValidate} disabled={extractedStrings.length === 0 || isTranslating}>
+              <button class="btn" style="background-color: #7c3aed;" on:click={handleBatchValidate} disabled={extractedStrings.length === 0 || isTranslating || isValidating || isLoading}>
                 일괄 검증
               </button>
             {/if}
@@ -2818,6 +2938,12 @@ Original text: "${processingText}"`;
       background: rgba(16, 185, 129, 0.15);
       color: #34d399;
       border-color: rgba(16, 185, 129, 0.25);
+    }
+
+    &.has-validation-error {
+      background: rgba(245, 158, 11, 0.15) !important;
+      color: #fbbf24 !important;
+      border-color: rgba(245, 158, 11, 0.25) !important;
     }
   }
 

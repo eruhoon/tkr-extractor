@@ -248,6 +248,20 @@
   let batchCompleted = $state(0);
   let isLoading = $state(false);
   let loadingText = $state('데이터 파일을 분석하고 불러오는 중입니다...');
+  let showLoadingProgress = $state(false);
+  
+  $effect(() => {
+    if (isLoading) {
+      const timer = setTimeout(() => {
+        if (isLoading) {
+          showLoadingProgress = true;
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else {
+      showLoadingProgress = false;
+    }
+  });
   let selectedFolder = $state('');
   let rvdataFiles = $state<string[]>([]);
   let selectedFileInFolder = $state('');
@@ -2310,7 +2324,7 @@ Original text: "${processingText}"`;
   </header>
 
   <main class="main-content" style="position: relative;">
-    {#if isLoading}
+    {#if showLoadingProgress}
       <div class="loading-overlay">
         <div class="spinner"></div>
         <p style="font-weight: 500; font-size: 1.1rem; margin-top: 1rem;">{loadingText}</p>

@@ -112,6 +112,13 @@
     }
   });
 
+  // 파일 로딩 시 첫 번째 사이드바 아이템(전체 보기 등)을 기본 선택
+  $effect(() => {
+    if (sidebarItems.length > 0 && !selectedSidebarItem) {
+      selectSidebarItem(sidebarItems[0]);
+    }
+  });
+
   let isScriptsFile = $derived(
     originalFilePath.toLowerCase().split(/[/\\]/).pop()?.startsWith('scripts') ?? false
   );
@@ -2251,13 +2258,13 @@ Original text: "${processingText}"`;
             {/if}
           </h2>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showManualTranslatePanel = !showManualTranslatePanel; if (showManualTranslatePanel) showGlossaryPanel = false; }}>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showManualTranslatePanel = !showManualTranslatePanel; if (showManualTranslatePanel) { showGlossaryPanel = false; showDebugPanel = false; } }}>
               {showManualTranslatePanel ? '⚙️ 번역 테스트 닫기' : '🌐 번역 테스트'}
             </button>
-            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showGlossaryPanel = !showGlossaryPanel; if (showGlossaryPanel) showManualTranslatePanel = false; }}>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showGlossaryPanel = !showGlossaryPanel; if (showGlossaryPanel) { showManualTranslatePanel = false; showDebugPanel = false; } }}>
               {showGlossaryPanel ? '📖 용어 사전 닫기' : '📘 용어 사전 관리'}
             </button>
-            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => showDebugPanel = !showDebugPanel}>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showDebugPanel = !showDebugPanel; if (showDebugPanel) { showManualTranslatePanel = false; showGlossaryPanel = false; } }}>
               {showDebugPanel ? '🛠️ 디버그 로그 닫기' : '⚙️ 디버그 로그 보기'}
             </button>
             {#if isTranslating && batchTotal > 0}
@@ -2425,6 +2432,32 @@ Original text: "${processingText}"`;
                 ⚠️ 번역 실패: {manualTranslateError}
               </div>
             {/if}
+          </div>
+        </div>
+        {/if}
+
+        <!-- 디버그 로그 패널 (고정 헤더 아래에 고정 배치) -->
+        {#if showDebugPanel}
+        <div class="glossary-fixed-container">
+          <div class="debug-panel glass-panel">
+            <div class="debug-header">
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <h3>🛠️ 디버그 로그 (Ollama 통신 과정)</h3>
+                <span style="font-size: 0.8rem; color: #94a3b8;">
+                  * Ollama API 통신 과정 및 실시간 응답 로그가 기록됩니다.
+                </span>
+              </div>
+              <button class="btn-small btn-save" on:click={() => debugLogs = []}>로그 지우기</button>
+            </div>
+            <div class="debug-content">
+              {#if debugLogs.length === 0}
+                <div class="log-entry" style="color: #64748b;">로그가 없습니다.</div>
+              {:else}
+                {#each debugLogs as log}
+                  <div class="log-entry">{log}</div>
+                {/each}
+              {/if}
+            </div>
           </div>
         </div>
         {/if}
@@ -2672,25 +2705,6 @@ Original text: "${processingText}"`;
               </p>
             {/if}
           </div>
-
-          <!-- 디버그 패널 -->
-          {#if showDebugPanel}
-          <div class="debug-panel glass-panel">
-            <div class="debug-header">
-              <h3>디버그 로그 (Ollama 통신 과정)</h3>
-              <button class="btn-small btn-save" on:click={() => debugLogs = []}>로그 지우기</button>
-            </div>
-            <div class="debug-content">
-              {#if debugLogs.length === 0}
-                <div class="log-entry" style="color: #64748b;">로그가 없습니다.</div>
-              {:else}
-                {#each debugLogs as log}
-                  <div class="log-entry">{log}</div>
-                {/each}
-              {/if}
-            </div>
-          </div>
-          {/if}
         </div>
       {:else}
         <div class="empty-state" style="display: flex; flex-direction: column; gap: 0.5rem; text-align: center;">
@@ -3154,6 +3168,53 @@ Original text: "${processingText}"`;
       backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border-color);
       z-index: 9;
+
+      .debug-panel {
+        flex-shrink: 0;
+        height: 250px;
+        display: flex;
+        flex-direction: column;
+        background: rgba(15, 23, 42, 0.5);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        overflow: hidden;
+        padding: 1rem;
+        gap: 0.75rem;
+
+        .debug-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-shrink: 0;
+          
+          h3 { margin: 0; font-size: 1rem; font-weight: 600; color: #f1f5f9; }
+        }
+
+        .debug-content {
+          flex: 1;
+          overflow-y: auto;
+          padding: 0.75rem;
+          font-family: 'Consolas', 'Courier New', monospace;
+          font-size: 0.8rem;
+          color: #a7f3d0;
+          background: rgba(0, 0, 0, 0.2);
+          border-radius: 6px;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          
+          .log-entry {
+            margin-bottom: 0.4rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+            padding-bottom: 0.2rem;
+          }
+        }
+
+        .btn-save {
+          background: #475569;
+          &:hover { background: #334155; }
+        }
+      }
     }
 
     .content-body {
@@ -3389,51 +3450,6 @@ Original text: "${processingText}"`;
         font-size: 0.8rem;
         line-height: 1.3;
       }
-    }
-
-    .debug-panel {
-      margin-top: 1rem;
-      flex-shrink: 0;
-      height: 180px;
-      display: flex;
-      flex-direction: column;
-      background: rgba(0, 0, 0, 0.4);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      overflow: hidden;
-
-      .debug-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.5rem 1rem;
-        background: rgba(15, 23, 42, 0.8);
-        border-bottom: 1px solid var(--border-color);
-        
-        h3 { margin: 0; font-size: 0.9rem; color: #94a3b8; }
-      }
-
-      .debug-content {
-        flex: 1;
-        overflow-y: auto;
-        padding: 0.75rem;
-        font-family: 'Consolas', 'Courier New', monospace;
-        font-size: 0.8rem;
-        color: #a7f3d0;
-        
-        .log-entry {
-          margin-bottom: 0.4rem;
-          white-space: pre-wrap;
-          word-break: break-all;
-          border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
-          padding-bottom: 0.2rem;
-        }
-      }
-    }
-
-    .btn-save {
-      background: #475569;
-      &:hover { background: #334155; }
     }
   }
 

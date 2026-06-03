@@ -1228,9 +1228,38 @@
     }
     matches.forEach((m, idx) => {
       m.index = idx;
-      validateRow(m);
     });
+
+    // 1. 즉시 렌더링에 필요한 첫 100개 항목 우선 검증 (지연 방지)
+    const firstBatch = matches.slice(0, 100);
+    for (const m of firstBatch) {
+      validateRow(m);
+    }
     extractedStrings = matches;
+
+    // 2. 나머지 항목들은 브라우저 이벤트 루프를 방해하지 않도록 백그라운드 청크 단위로 비동기 검증
+    if (matches.length > 100) {
+      const rest = matches.slice(100);
+      const chunkSize = 2000;
+      let currentIndex = 0;
+      
+      const validateChunk = () => {
+        if (selectedSidebarItem !== item) return; // 사용자가 중간에 다른 파일/항목을 선택했다면 중단
+        
+        const chunk = rest.slice(currentIndex, currentIndex + chunkSize);
+        for (const m of chunk) {
+          validateRow(m);
+        }
+        extractedStrings = [...extractedStrings]; // Svelte 반응성 트리거
+        
+        currentIndex += chunkSize;
+        if (currentIndex < rest.length) {
+          setTimeout(validateChunk, 0);
+        }
+      };
+      
+      setTimeout(validateChunk, 0);
+    }
 
     scrollTop = 0;
     searchQuery = '';

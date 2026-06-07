@@ -31,9 +31,9 @@
   let { isDragging = false } = $props();
 
   let originalFilePath = $state('');
-  let scripts = $state<ScriptEntry[]>([]);
+  let scripts = $state.raw<ScriptEntry[]>([]);
   let selectedSidebarItem = $state<SidebarItem | null>(null);
-  let extractedStrings = $state<ExtractedString[]>([]);
+  let extractedStrings = $state.raw<ExtractedString[]>([]);
 
   let isValidating = $state(false);
   let showValidationProgress = $state(false);
@@ -110,6 +110,23 @@
   );
   let topSpacerHeight = $derived(startIndex * estimatedRowHeight);
   let totalHeight = $derived(filteredStrings.length * estimatedRowHeight);
+
+  function refreshExtractedStrings() {
+    extractedStrings = extractedStrings.map(item => ({ ...item }));
+  }
+
+  function updateExtractedString(id: number, updates: Partial<ExtractedString>) {
+    extractedStrings = extractedStrings.map(item => {
+      if (item.id === id) {
+        const updated = { ...item, ...updates };
+        if (updates.translatedText !== undefined) {
+          updated.validationError = getValidationError(updated.text, updated.translatedText);
+        }
+        return updated;
+      }
+      return item;
+    });
+  }
 
   // 검색이나 필터가 변경되면 스크롤을 위로 리셋
   $effect(() => {
@@ -202,6 +219,54 @@
     }
   });
 
+  // 사이드바 가상 스크롤 상태
+  let sidebarScrollTop = $state(0);
+  let sidebarViewportHeight = $state(0);
+  let sidebarViewportEl = $state<HTMLElement | null>(null);
+  const sidebarEstimatedRowHeight = 44; // 넉넉하게 잡은 행 높이 (px)
+  const sidebarBufferItems = 15;
+
+  function handleSidebarScroll(e: Event) {
+    const target = e.target as HTMLElement;
+    sidebarScrollTop = target.scrollTop;
+  }
+
+  $effect(() => {
+    if (sidebarViewportEl) {
+      sidebarViewportHeight = sidebarViewportEl.clientHeight || 800;
+      const observer = new ResizeObserver(entries => {
+        for (let entry of entries) {
+          sidebarViewportHeight = entry.contentRect.height;
+        }
+      });
+      observer.observe(sidebarViewportEl);
+      return () => observer.disconnect();
+    }
+  });
+
+  let sidebarStartIndex = $derived(
+    Math.max(0, Math.floor(sidebarScrollTop / sidebarEstimatedRowHeight) - sidebarBufferItems)
+  );
+  let sidebarEndIndex = $derived(
+    Math.min(
+      sidebarItems.length,
+      Math.ceil((sidebarScrollTop + sidebarViewportHeight) / sidebarEstimatedRowHeight) + sidebarBufferItems
+    )
+  );
+  let visibleSidebarItems = $derived(
+    sidebarItems.slice(sidebarStartIndex, sidebarEndIndex)
+  );
+  let sidebarTopSpacerHeight = $derived(sidebarStartIndex * sidebarEstimatedRowHeight);
+  let sidebarTotalHeight = $derived(sidebarItems.length * sidebarEstimatedRowHeight);
+
+  // 파일 변경 시 사이드바 스크롤 리셋
+  $effect(() => {
+    const _path = originalFilePath;
+    if (sidebarViewportEl) {
+      sidebarViewportEl.scrollTop = 0;
+    }
+  });
+
   function getCompletedCount(s: ScriptEntry, isScripts: boolean): number {
     if (!s.translations) return 0;
     
@@ -211,7 +276,7 @@
         for (let i = 0; i < s.jpTexts.length; i++) {
           const text = s.jpTexts[i];
           const trans = s.translations[text];
-          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
             completed++;
           }
         }
@@ -221,14 +286,14 @@
         while ((match = jpRegex.exec(s.code)) !== null) {
           const text = match[1] || match[2] || '';
           const trans = s.translations[text];
-          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
             completed++;
           }
         }
       }
     } else {
       const trans = s.translations[s.code];
-      if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+      if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
         completed = 1;
       }
     }
@@ -568,13 +633,13 @@
           while ((match = jpRegex.exec(s.code)) !== null) {
             const text = match[1] || match[2] || '';
             const trans = transMap[text];
-            if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+            if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
               completedCount++;
             }
           }
         } else {
           const trans = transMap[s.code];
-          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
             completedCount++;
           }
         }
@@ -842,7 +907,7 @@
               for (let i = 0; i < s.jpTexts.length; i++) {
                 const text = s.jpTexts[i];
                 const trans = s.translations[text];
-                if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
                   completed++;
                 }
               }
@@ -855,7 +920,7 @@
           if (s.code === originalText) {
             if (!s.translations) s.translations = {};
             s.translations[s.code] = newTranslatedText;
-            s.completedCount = (newTranslatedText && newTranslatedText !== "번역 중..." && newTranslatedText !== "번역 실패" && newTranslatedText.trim() !== "") ? 1 : 0;
+            s.completedCount = (newTranslatedText && newTranslatedText !== "번역 중..." && newTranslatedText !== "번역 실패" && newTranslatedText !== "번역 중단" && newTranslatedText.trim() !== "") ? 1 : 0;
             s.hasValidationError = checkScriptEntryValidationError(s, isScripts);
             currentFileUpdates = true;
           }
@@ -1024,13 +1089,13 @@
               for (let j = 0; j < jpTexts.length; j++) {
                 const text = jpTexts[j];
                 const trans = s.translations[text];
-                if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
                   completedCount++;
                 }
               }
             } else {
               const trans = s.translations[s.code];
-              if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+              if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
                 completedCount = 1;
               }
             }
@@ -1058,7 +1123,13 @@
             const chunk = mappedScripts.slice(i, i + chunkSize);
             for (const s of chunk) {
               if (stagedData[s.id]) {
-                s.translations = stagedData[s.id];
+                const transMap = stagedData[s.id];
+                for (const key of Object.keys(transMap)) {
+                  if (transMap[key] === "번역 중..." || transMap[key] === "번역 중단") {
+                    transMap[key] = "";
+                  }
+                }
+                s.translations = transMap;
                 // staged 복구 후 completedCount 재계산
                 let completed = 0;
                 if (isScripts) {
@@ -1066,14 +1137,14 @@
                     for (let j = 0; j < s.jpTexts.length; j++) {
                       const text = s.jpTexts[j];
                       const trans = s.translations?.[text];
-                      if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                      if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
                         completed++;
                       }
                     }
                   }
                 } else {
                   const trans = s.translations?.[s.code];
-                  if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+                  if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
                     completed = 1;
                   }
                 }
@@ -1255,10 +1326,16 @@
         if (selectedSidebarItem !== item) return; // 사용자가 중간에 다른 파일/항목을 선택했다면 중단
         
         const chunk = rest.slice(currentIndex, currentIndex + chunkSize);
-        for (const m of chunk) {
-          validateRow(m);
-        }
-        extractedStrings = [...extractedStrings]; // Svelte 반응성 트리거
+        const ids = new Set(chunk.map(c => c.id));
+        extractedStrings = extractedStrings.map(x => {
+          if (ids.has(x.id)) {
+            return {
+              ...x,
+              validationError: getValidationError(x.text, x.translatedText)
+            };
+          }
+          return x;
+        });
         
         currentIndex += chunkSize;
         if (currentIndex < rest.length) {
@@ -1554,41 +1631,49 @@ Original text: "${processingText}"`;
     return leadingSpaces + cleaned + trailingSpaces;
   }
 
-  async function handleTranslateRow(item: ExtractedString, signal?: AbortSignal, mode: 'normal' | 'detailed' = 'normal') {
-    item.translatedText = "번역 중...";
-    extractedStrings = [...extractedStrings];
+  async function handleTranslateRow(
+    item: ExtractedString,
+    signal?: AbortSignal,
+    mode: 'normal' | 'detailed' = 'normal',
+    skipSaveStaged = false
+  ) {
+    updateExtractedString(item.id, { translatedText: "번역 중..." });
 
     const requestStartTime = Date.now();
 
     try {
       const cleanText = await performTranslation(item.text, mode, signal);
-      
-      item.translatedText = cleanText;
-      item.errorMsg = undefined;
-      validateRow(item);
       const elapsed = ((Date.now() - requestStartTime) / 1000).toFixed(2);
-      item.translationTime = parseFloat(elapsed);
+      
+      updateExtractedString(item.id, {
+        translatedText: cleanText,
+        errorMsg: undefined,
+        translationTime: parseFloat(elapsed)
+      });
       addLog(`[번역 완료] 결과: "${cleanText}" (소요 시간: ${elapsed}초)`);
 
-      if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패") {
+      if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패" && cleanText !== "번역 중단") {
         cacheData[item.text] = cleanText;
         await saveCache();
       }
     } catch(e: any) {
       if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
-        item.translatedText = "번역 중단";
+        updateExtractedString(item.id, { translatedText: "번역 중단" });
         addLog(`[번역 중단] 작업이 사용자에 의해 중지되었습니다.`);
         throw e; // 호출한 상위 함수로 AbortError 전파
       }
       console.error("Translation Error", e);
       const errMsg = e?.message || JSON.stringify(e) || String(e);
-      item.translatedText = "번역 실패";
-      item.errorMsg = errMsg;
+      updateExtractedString(item.id, {
+        translatedText: "번역 실패",
+        errorMsg: errMsg
+      });
       addLog(`[번역 실패] 오류: ${errMsg}`);
     } finally {
-      extractedStrings = [...extractedStrings];
-      saveCurrentTranslations();
-      await saveStagedFile();
+      if (!skipSaveStaged) {
+        saveCurrentTranslations();
+        await saveStagedFile();
+      }
     }
   }
 
@@ -1651,7 +1736,7 @@ Original text: "${processingText}"`;
   }
 
   function getValidationError(jpText: string, koText: string): string | undefined {
-    if (!koText || koText === "번역 중..." || koText === "번역 실패" || koText.trim() === "") {
+    if (!koText || koText === "번역 중..." || koText === "번역 실패" || koText === "번역 중단" || koText.trim() === "") {
       return undefined;
     }
 
@@ -1734,7 +1819,7 @@ Original text: "${processingText}"`;
         for (let i = 0; i < s.jpTexts.length; i++) {
           const text = s.jpTexts[i];
           const trans = s.translations[text];
-          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+          if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
             if (getValidationError(text, trans) !== undefined) {
               return true;
             }
@@ -1743,7 +1828,7 @@ Original text: "${processingText}"`;
       }
     } else {
       const trans = s.translations[s.code];
-      if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans.trim() !== "") {
+      if (trans && trans !== "번역 중..." && trans !== "번역 실패" && trans !== "번역 중단" && trans.trim() !== "") {
         if (getValidationError(s.code, trans) !== undefined) {
           return true;
         }
@@ -1777,11 +1862,19 @@ Original text: "${processingText}"`;
       const chunkSize = 2000;
       for (let i = 0; i < total; i += chunkSize) {
         const chunk = targets.slice(i, i + chunkSize);
-        for (const item of chunk) {
-          validateRow(item);
-        }
+        const ids = new Set(chunk.map(c => c.id));
+        
+        extractedStrings = extractedStrings.map(x => {
+          if (ids.has(x.id)) {
+            return {
+              ...x,
+              validationError: getValidationError(x.text, x.translatedText)
+            };
+          }
+          return x;
+        });
+        
         validationProgressCurrent = Math.min(total, i + chunkSize);
-        extractedStrings = [...extractedStrings]; // 반응성 반영
         
         // 브라우저 메인 스레드에 제어권 양보 (UI 렌더링 허용)
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -1821,10 +1914,12 @@ Original text: "${processingText}"`;
   }
 
   async function handleBatchTranslate(mode: 'normal' | 'detailed' = 'normal') {
-    // 현재 필터링된 대사들 중에서 미번역/실패/검증오류 항목만 선별하여 일괄 번역 진행
+    // 현재 필터링된 대사들 중에서 미번역/실패/번역중/번역중단/검증오류 항목만 선별하여 일괄 번역 진행
     const itemsToTranslate = filteredStrings.filter(i =>
       !i.translatedText ||
       i.translatedText === "번역 실패" ||
+      i.translatedText === "번역 중..." ||
+      i.translatedText === "번역 중단" ||
       i.validationError !== undefined
     );
     if (itemsToTranslate.length === 0) return;
@@ -1833,8 +1928,6 @@ Original text: "${processingText}"`;
     translationAbortController = new AbortController();
     batchTotal = itemsToTranslate.length;
     batchCompleted = 0;
-
-    let cacheUpdates = false;
 
     try {
       await invoke('prevent_sleep');
@@ -1847,16 +1940,17 @@ Original text: "${processingText}"`;
         // validationError가 있으면 캐시 없이 항상 재번역
         // 자세히 번역(detailed) 모드인 경우 캐시를 적용하지 않고 재번역하여 고품질 결과를 유도하도록 함
         if (mode === 'normal' && !item.validationError && selectedFolder && cacheData[item.text]) {
-          item.translatedText = cacheData[item.text];
-          item.errorMsg = undefined;
+          updateExtractedString(item.id, {
+            translatedText: cacheData[item.text],
+            errorMsg: undefined
+          });
           batchCompleted++;
-          cacheUpdates = true;
           addLog(`[캐시 적용] 원문: "${item.text}" -> "${cacheData[item.text]}"`);
           continue;
         }
 
         try {
-          await handleTranslateRow(item, translationAbortController.signal, mode);
+          await handleTranslateRow(item, translationAbortController.signal, mode, true);
         } catch (err: any) {
           if (err.name === 'AbortError' || (err.message && err.message.includes('abort'))) {
             addLog("일괄 번역이 즉시 중지되었습니다.");
@@ -1868,13 +1962,11 @@ Original text: "${processingText}"`;
         batchCompleted++;
         
         if (batchCompleted % 10 === 0) {
+          saveCurrentTranslations();
           await saveStagedFile();
         }
       }
-      if (cacheUpdates) {
-        extractedStrings = [...extractedStrings];
-        saveCurrentTranslations();
-      }
+      saveCurrentTranslations();
       await saveStagedFile();
     } catch (e) {
       console.error("Batch translation error", e);
@@ -1897,7 +1989,7 @@ Original text: "${processingText}"`;
       let newCode = s.code;
       if (isScriptsVal) {
         for (const [originalText, translatedText] of Object.entries(s.translations)) {
-          if (translatedText && translatedText !== "번역 중..." && translatedText !== "번역 실패") {
+          if (translatedText && translatedText !== "번역 중..." && translatedText !== "번역 실패" && translatedText !== "번역 중단") {
             const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const escapedText = escapeRegex(originalText);
             const singleQuoteRegex = new RegExp(`'${escapedText}'`, 'g');
@@ -1908,7 +2000,7 @@ Original text: "${processingText}"`;
         }
       } else {
         const translatedText = s.translations[s.code];
-        if (translatedText && translatedText !== "번역 중..." && translatedText !== "번역 실패") {
+        if (translatedText && translatedText !== "번역 중..." && translatedText !== "번역 실패" && translatedText !== "번역 중단") {
           newCode = translatedText;
         }
       }
@@ -2111,6 +2203,7 @@ Original text: "${processingText}"`;
       await saveCache();
     }
     await saveStagedFile();
+    updateExtractedString(item.id, { translatedText: cleanText });
   }
 
   async function clickTranslateRow(item: ExtractedString, mode: 'normal' | 'detailed' = 'normal') {
@@ -2404,8 +2497,10 @@ Original text: "${processingText}"`;
         <span>대사 리스트</span>
         <span class="header-badge">{sidebarItems.filter(i => i.id !== "ALL_ITEMS").length}</span>
       </h3>
-      <ul class="script-list">
-        {#each sidebarItems as item, idx}
+      <ul class="script-list" bind:this={sidebarViewportEl} on:scroll={handleSidebarScroll}>
+        <li style="height: {sidebarTopSpacerHeight}px; padding: 0; margin: 0; border: none; background: transparent; cursor: default;"></li>
+        {#each visibleSidebarItems as item, i (item.id)}
+          {@const idx = sidebarStartIndex + i}
           <li 
             class:active={selectedSidebarItem?.id === item.id} 
             class:disabled={isTranslating}
@@ -2424,6 +2519,7 @@ Original text: "${processingText}"`;
             {/if}
           </li>
         {/each}
+        <li style="height: {Math.max(0, sidebarTotalHeight - sidebarTopSpacerHeight - (visibleSidebarItems.length * sidebarEstimatedRowHeight))}px; padding: 0; margin: 0; border: none; background: transparent; cursor: default;"></li>
       </ul>
     </aside>
 

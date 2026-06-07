@@ -749,6 +749,8 @@
     saveCurrentTranslations();
 
     isLoading = true;
+    loadingProgressCurrent = 0;
+    loadingProgressTotal = 0;
     let matchCount = 0;
     let fileCount = 0;
 
@@ -817,6 +819,8 @@
     if (!confirmReplace) return;
 
     isLoading = true;
+    loadingProgressCurrent = 0;
+    loadingProgressTotal = 0;
     try {
       // 1. 캐시 업데이트
       cacheData[originalText] = newTranslatedText;
@@ -916,6 +920,8 @@
     }
     loadingText = '데이터 파일을 분석하고 불러오는 중입니다...';
     isLoading = true;
+    loadingProgressCurrent = 0;
+    loadingProgressTotal = 0;
     
     // Check if path is a directory (e.g. dragged folder)
     try {
@@ -1039,19 +1045,17 @@
         // UI가 갱신될 수 있도록 메인 스레드 양보
         await new Promise(resolve => setTimeout(resolve, 0));
       }
-      scripts = mappedScripts;
-
       if (shouldApplyStaged) {
         try {
           const jsonContent: string = await invoke('read_staged_json', { path: stagedPath });
           const stagedData = JSON.parse(jsonContent);
           
-          loadingProgressTotal = scripts.length;
+          loadingProgressTotal = mappedScripts.length;
           loadingProgressCurrent = 0;
           loadingText = '임시 저장된 번역 데이터를 복구하는 중입니다...';
 
-          for (let i = 0; i < scripts.length; i += chunkSize) {
-            const chunk = scripts.slice(i, i + chunkSize);
+          for (let i = 0; i < mappedScripts.length; i += chunkSize) {
+            const chunk = mappedScripts.slice(i, i + chunkSize);
             for (const s of chunk) {
               if (stagedData[s.id]) {
                 s.translations = stagedData[s.id];
@@ -1078,7 +1082,7 @@
               }
             }
             
-            loadingProgressCurrent = Math.min(scripts.length, i + chunkSize);
+            loadingProgressCurrent = Math.min(mappedScripts.length, i + chunkSize);
             // UI가 갱신될 수 있도록 메인 스레드 양보
             await new Promise(resolve => setTimeout(resolve, 0));
           }
@@ -1089,6 +1093,8 @@
           alert("임시 저장 파일 분석 실패: " + jsonErr);
         }
       }
+
+      scripts = mappedScripts;
 
       selectedSidebarItem = null;
       extractedStrings = [];
@@ -1126,6 +1132,8 @@
       selectedFolder = selected;
       loadingText = '데이터 파일을 분석하고 불러오는 중입니다...';
       isLoading = true;
+      loadingProgressCurrent = 0;
+      loadingProgressTotal = 0;
       try {
         const files: string[] = await invoke('get_rvdata_in_folder', { folderPath: selectedFolder });
         rvdataFiles = files;
@@ -1784,6 +1792,11 @@ Original text: "${processingText}"`;
       const currentErrorCount = targets.filter(i => i.validationError).length;
       addLog(`[일괄 검증 완료] 검증 대상 중 문제 항목 ${currentErrorCount}개 발견`);
 
+      // Clear timer and hide progress before blocking on message dialog
+      clearTimeout(progressTimer);
+      isValidating = false;
+      showValidationProgress = false;
+
       if (currentErrorCount === 0) {
         await message("검증 완료: 발견된 문제 항목이 없습니다! ✅", { title: "검증 완료", kind: "info" });
       } else {
@@ -1956,6 +1969,8 @@ Original text: "${processingText}"`;
     
     loadingText = '폴더 내 모든 데이터를 변환 및 저장하고 있습니다...';
     isLoading = true;
+    loadingProgressCurrent = 0;
+    loadingProgressTotal = 0;
     addLog(`[폴더 전체 변환 시작] 대상 폴더: ${targetFolder}`);
 
     try {
@@ -2014,6 +2029,10 @@ Original text: "${processingText}"`;
       }
 
       addLog(`[폴더 전체 변환 완료] 결과가 성공적으로 저장되었습니다: ${targetFolder}`);
+      
+      // Hide progress before blocking on message dialog
+      isLoading = false;
+
       await message(`폴더 전체 변환이 성공적으로 완료되었습니다! ✅\n\n저장 경로: ${targetFolder}`, {
         title: "변환 완료",
         kind: "info"
@@ -2258,8 +2277,8 @@ Original text: "${processingText}"`;
               </span>
             </div>
             {#if llamaServerStatus === 'downloading'}
-              <div class="llama-download-progress-bar-wrap" style="width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; margin: 0.5rem 0;">
-                <div class="llama-download-progress-bar" style="width: {downloadProgress}%; height: 100%; background: #3b82f6; transition: width 0.3s ease;"></div>
+              <div class="llama-download-progress-bar-wrap">
+                <div class="llama-download-progress-bar" style:width="{downloadProgress}%"></div>
               </div>
             {/if}
             <div class="llama-tooltip-row">
@@ -2361,8 +2380,8 @@ Original text: "${processingText}"`;
           <p style="margin-top: 0.5rem; font-size: 0.95rem; color: #94a3b8;">
             {loadingProgressCurrent} / {loadingProgressTotal} ({Math.round((loadingProgressCurrent / loadingProgressTotal) * 100)}%)
           </p>
-          <div class="loading-progress-bar-container" style="width: 250px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 999px; margin-top: 0.5rem; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);">
-            <div class="loading-progress-bar" style="height: 100%; width: {(loadingProgressCurrent / loadingProgressTotal) * 100}%; background: linear-gradient(to right, #3b82f6, #60a5fa); transition: width 0.05s ease; border-radius: 999px;"></div>
+          <div class="loading-progress-bar-container">
+            <div class="loading-progress-bar" style:width="{loadingProgressTotal > 0 ? (loadingProgressCurrent / loadingProgressTotal) * 100 : 0}%"></div>
           </div>
         {/if}
       </div>
@@ -2375,8 +2394,8 @@ Original text: "${processingText}"`;
         <p style="margin-top: 0.5rem; font-size: 1.1rem; font-weight: 500;">
           {validationProgressCurrent} / {validationProgressTotal}개 항목 완료 ({Math.round((validationProgressCurrent / validationProgressTotal) * 100)}%)
         </p>
-        <div class="validation-progress-bar-container" style="width: 300px; height: 8px; background: rgba(255,255,255,0.1); border-radius: 999px; margin-top: 1rem; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);">
-          <div class="validation-progress-bar" style="height: 100%; width: {(validationProgressCurrent / validationProgressTotal) * 100}%; background: linear-gradient(to right, #7c3aed, #a78bfa); transition: width 0.1s ease; border-radius: 999px;"></div>
+        <div class="validation-progress-bar-container">
+          <div class="validation-progress-bar" style:width="{validationProgressTotal > 0 ? (validationProgressCurrent / validationProgressTotal) * 100 : 0}%"></div>
         </div>
       </div>
     {/if}
@@ -4046,5 +4065,55 @@ Original text: "${processingText}"`;
         cursor: not-allowed;
       }
     }
+  }
+
+  /* Progress Bars */
+  .loading-progress-bar-container {
+    width: 250px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 999px;
+    margin-top: 0.5rem;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .loading-progress-bar {
+    height: 100%;
+    background: linear-gradient(to right, #3b82f6, #60a5fa);
+    transition: width 0.05s ease;
+    border-radius: 999px;
+  }
+
+  .validation-progress-bar-container {
+    width: 300px;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 999px;
+    margin-top: 1rem;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .validation-progress-bar {
+    height: 100%;
+    background: linear-gradient(to right, #7c3aed, #a78bfa);
+    transition: width 0.1s ease;
+    border-radius: 999px;
+  }
+
+  .llama-download-progress-bar-wrap {
+    width: 100%;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 0.5rem 0;
+  }
+
+  .llama-download-progress-bar {
+    height: 100%;
+    background: #3b82f6;
+    transition: width 0.3s ease;
   }
 </style>

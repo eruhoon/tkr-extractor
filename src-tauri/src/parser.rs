@@ -306,18 +306,48 @@ fn parse_map_events(value: Value) -> Result<Vec<ScriptEntry>, String> {
                                 _ => 0,
                             };
 
-                            if code == 401 || code == 101 {
-                                let params_val = cmd_fields.get(&Symbol::from("@parameters"))
-                                    .ok_or_else(|| "Command @parameters not found".to_string())?;
-                                if let Value::Array(params) = params_val {
+                            let params_val = cmd_fields.get(&Symbol::from("@parameters"))
+                                .ok_or_else(|| "Command @parameters not found".to_string())?;
+                            
+                            if let Value::Array(params) = params_val {
+                                if code == 401 || code == 101 {
                                     if !params.is_empty() {
                                         if let Some(text) = get_string_value(&params[0]) {
                                             if has_japanese(&text) {
-                                                // ID 인코딩: event_id, page_idx, cmd_idx 조합
-                                                let entry_id = (event_id as i64) * 1_000_000_000 + (page_idx as i64) * 1_000_000 + (cmd_idx as i64);
+                                                let base_id = (event_id as i64) * 1_000_000_000 + (page_idx as i64) * 1_000_000 + (cmd_idx as i64);
                                                 entries.push(ScriptEntry {
-                                                    id: entry_id,
+                                                    id: base_id * 10,
                                                     title: format!("Event {} (Page {}) - Line {}", event_id, page_idx + 1, cmd_idx),
+                                                    code: text,
+                                                });
+                                            }
+                                        }
+                                    }
+                                } else if code == 102 {
+                                    if !params.is_empty() {
+                                        if let Value::Array(choices) = &params[0] {
+                                            for (choice_idx, choice_val) in choices.iter().enumerate() {
+                                                if let Some(text) = get_string_value(choice_val) {
+                                                    if has_japanese(&text) {
+                                                        let base_id = (event_id as i64) * 1_000_000_000 + (page_idx as i64) * 1_000_000 + (cmd_idx as i64);
+                                                        entries.push(ScriptEntry {
+                                                            id: base_id * 10 + (choice_idx as i64) + 1,
+                                                            title: format!("Event {} (Page {}) - Line {} [Choice {}]", event_id, page_idx + 1, cmd_idx, choice_idx + 1),
+                                                            code: text,
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if code == 402 {
+                                    if params.len() > 1 {
+                                        if let Some(text) = get_string_value(&params[1]) {
+                                            if has_japanese(&text) {
+                                                let base_id = (event_id as i64) * 1_000_000_000 + (page_idx as i64) * 1_000_000 + (cmd_idx as i64);
+                                                entries.push(ScriptEntry {
+                                                    id: base_id * 10,
+                                                    title: format!("Event {} (Page {}) - Line {} [When Choice]", event_id, page_idx + 1, cmd_idx),
                                                     code: text,
                                                 });
                                             }
@@ -342,9 +372,12 @@ fn save_map_events(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> Resu
 
     if let Value::Hash(events_hash) = events_val {
         for entry in updated_entries {
-            let event_id = (entry.id / 1_000_000_000) as i32;
-            let page_idx = ((entry.id % 1_000_000_000) / 1_000_000) as i32;
-            let cmd_idx = (entry.id % 1_000_000) as i32;
+            let base_id = entry.id / 10;
+            let choice_offset = entry.id % 10;
+
+            let event_id = (base_id / 1_000_000_000) as i32;
+            let page_idx = ((base_id % 1_000_000_000) / 1_000_000) as i32;
+            let cmd_idx = (base_id % 1_000_000) as i32;
 
             if let Some(event_val) = events_hash.get_mut(&Value::Integer(event_id)) {
                 let event_fields = get_fields_mut(event_val)?;
@@ -360,12 +393,30 @@ fn save_map_events(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> Resu
                         if let Value::Array(commands) = list_val {
                             if let Some(cmd_val) = commands.get_mut(cmd_idx as usize) {
                                 let cmd_fields = get_fields_mut(cmd_val)?;
+                                
+                                let code_val = cmd_fields.get(&Symbol::from("@code"));
+                                let code = match code_val {
+                                    Some(Value::Integer(c)) => *c,
+                                    _ => 0,
+                                };
+
                                 let params_val = cmd_fields.get_mut(&Symbol::from("@parameters"))
                                     .ok_or_else(|| "Command @parameters not found".to_string())?;
 
                                 if let Value::Array(params) = params_val {
-                                    if !params.is_empty() {
-                                        set_string_value(&mut params[0], entry.code)?;
+                                    if code == 401 || code == 101 || code == 402 {
+                                        let text_idx = if code == 402 { 1 } else { 0 };
+                                        if params.len() > text_idx {
+                                            set_string_value(&mut params[text_idx], entry.code)?;
+                                        }
+                                    } else if code == 102 {
+                                        if !params.is_empty() {
+                                            if let Value::Array(choices) = &mut params[0] {
+                                                if choice_offset > 0 && (choice_offset as usize) - 1 < choices.len() {
+                                                    set_string_value(&mut choices[(choice_offset as usize) - 1], entry.code)?;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -394,16 +445,46 @@ fn parse_common_events(value: Value) -> Result<Vec<ScriptEntry>, String> {
                         if let Ok(cmd_fields) = get_fields(cmd_val) {
                             let code_val = cmd_fields.get(&Symbol::from("@code"));
                             if let Some(Value::Integer(code)) = code_val {
-                                if *code == 401 || *code == 101 {
-                                    let params_val = cmd_fields.get(&Symbol::from("@parameters"));
-                                    if let Some(Value::Array(params)) = params_val {
+                                let params_val = cmd_fields.get(&Symbol::from("@parameters"));
+                                if let Some(Value::Array(params)) = params_val {
+                                    if *code == 401 || *code == 101 {
                                         if !params.is_empty() {
                                             if let Some(text) = get_string_value(&params[0]) {
                                                 if has_japanese(&text) {
-                                                    let entry_id = (event_idx as i64) * 1_000_000 + (cmd_idx as i64);
+                                                    let base_id = (event_idx as i64) * 1_000_000 + (cmd_idx as i64);
                                                     entries.push(ScriptEntry {
-                                                        id: entry_id,
+                                                        id: base_id * 10,
                                                         title: format!("CommonEvent {} - Line {}", event_idx, cmd_idx),
+                                                        code: text,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    } else if *code == 102 {
+                                        if !params.is_empty() {
+                                            if let Value::Array(choices) = &params[0] {
+                                                for (choice_idx, choice_val) in choices.iter().enumerate() {
+                                                    if let Some(text) = get_string_value(choice_val) {
+                                                        if has_japanese(&text) {
+                                                            let base_id = (event_idx as i64) * 1_000_000 + (cmd_idx as i64);
+                                                            entries.push(ScriptEntry {
+                                                                id: base_id * 10 + (choice_idx as i64) + 1,
+                                                                title: format!("CommonEvent {} - Line {} [Choice {}]", event_idx, cmd_idx, choice_idx + 1),
+                                                                code: text,
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else if *code == 402 {
+                                        if params.len() > 1 {
+                                            if let Some(text) = get_string_value(&params[1]) {
+                                                if has_japanese(&text) {
+                                                    let base_id = (event_idx as i64) * 1_000_000 + (cmd_idx as i64);
+                                                    entries.push(ScriptEntry {
+                                                        id: base_id * 10,
+                                                        title: format!("CommonEvent {} - Line {} [When Choice]", event_idx, cmd_idx),
                                                         code: text,
                                                     });
                                                 }
@@ -425,8 +506,11 @@ fn parse_common_events(value: Value) -> Result<Vec<ScriptEntry>, String> {
 fn save_common_events(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> Result<(), String> {
     if let Value::Array(arr) = value {
         for entry in updated_entries {
-            let event_idx = (entry.id / 1_000_000) as usize;
-            let cmd_idx = (entry.id % 1_000_000) as usize;
+            let base_id = entry.id / 10;
+            let choice_offset = entry.id % 10;
+
+            let event_idx = (base_id / 1_000_000) as usize;
+            let cmd_idx = (base_id % 1_000_000) as usize;
 
             if let Some(event_val) = arr.get_mut(event_idx as usize) {
                 if let Ok(fields) = get_fields_mut(event_val) {
@@ -434,10 +518,27 @@ fn save_common_events(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> R
                     if let Some(Value::Array(commands)) = list_val {
                         if let Some(cmd_val) = commands.get_mut(cmd_idx as usize) {
                             if let Ok(cmd_fields) = get_fields_mut(cmd_val) {
+                                let code_val = cmd_fields.get(&Symbol::from("@code"));
+                                let code = match code_val {
+                                    Some(Value::Integer(c)) => *c,
+                                    _ => 0,
+                                };
+
                                 let params_val = cmd_fields.get_mut(&Symbol::from("@parameters"));
                                 if let Some(Value::Array(params)) = params_val {
-                                    if !params.is_empty() {
-                                        set_string_value(&mut params[0], entry.code)?;
+                                    if code == 401 || code == 101 || code == 402 {
+                                        let text_idx = if code == 402 { 1 } else { 0 };
+                                        if params.len() > text_idx {
+                                            set_string_value(&mut params[text_idx], entry.code)?;
+                                        }
+                                    } else if code == 102 {
+                                        if !params.is_empty() {
+                                            if let Value::Array(choices) = &mut params[0] {
+                                                if choice_offset > 0 && (choice_offset as usize) - 1 < choices.len() {
+                                                    set_string_value(&mut choices[(choice_offset as usize) - 1], entry.code)?;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }

@@ -52,7 +52,7 @@
   
   let showContext = $derived(searchQuery.trim() !== '' || filterMode !== 'all');
   let estimatedRowHeight = $derived(showContext ? 220 : 110);
-  const bufferItems = 8;
+  const bufferItems = 30; // 8 -> 30으로 늘려서 스크롤 시 마운트/언마운트 빈도를 줄여 떨림 방지
 
   function handleScroll(e: Event) {
     const target = e.target as HTMLElement;
@@ -219,45 +219,8 @@
     }
   });
 
-  // 사이드바 가상 스크롤 상태
-  let sidebarScrollTop = $state(0);
-  let sidebarViewportHeight = $state(0);
+  // 사이드바 스크롤 엘리먼트 바인딩 및 파일 변경 시 스크롤 리셋
   let sidebarViewportEl = $state<HTMLElement | null>(null);
-  const sidebarEstimatedRowHeight = 44; // 넉넉하게 잡은 행 높이 (px)
-  const sidebarBufferItems = 15;
-
-  function handleSidebarScroll(e: Event) {
-    const target = e.target as HTMLElement;
-    sidebarScrollTop = target.scrollTop;
-  }
-
-  $effect(() => {
-    if (sidebarViewportEl) {
-      sidebarViewportHeight = sidebarViewportEl.clientHeight || 800;
-      const observer = new ResizeObserver(entries => {
-        for (let entry of entries) {
-          sidebarViewportHeight = entry.contentRect.height;
-        }
-      });
-      observer.observe(sidebarViewportEl);
-      return () => observer.disconnect();
-    }
-  });
-
-  let sidebarStartIndex = $derived(
-    Math.max(0, Math.floor(sidebarScrollTop / sidebarEstimatedRowHeight) - sidebarBufferItems)
-  );
-  let sidebarEndIndex = $derived(
-    Math.min(
-      sidebarItems.length,
-      Math.ceil((sidebarScrollTop + sidebarViewportHeight) / sidebarEstimatedRowHeight) + sidebarBufferItems
-    )
-  );
-  let visibleSidebarItems = $derived(
-    sidebarItems.slice(sidebarStartIndex, sidebarEndIndex)
-  );
-  let sidebarTopSpacerHeight = $derived(sidebarStartIndex * sidebarEstimatedRowHeight);
-  let sidebarTotalHeight = $derived(sidebarItems.length * sidebarEstimatedRowHeight);
 
   // 파일 변경 시 사이드바 스크롤 리셋
   $effect(() => {
@@ -281,7 +244,7 @@
           }
         }
       } else {
-        const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+        const jpRegex = /'([^'\r\n]*[ぁ-んァ-ヶ一-龠]+[^'\r\n]*)'|"([^"\r\n]*[ぁ-んァ-ヶ一-龠]+[^"\r\n]*)"/g;
         let match;
         while ((match = jpRegex.exec(s.code)) !== null) {
           const text = match[1] || match[2] || '';
@@ -605,7 +568,7 @@
       
       for (const s of loaded) {
         if (isScripts) {
-          const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+          const jpRegex = /'([^'\r\n]*[ぁ-んァ-ヶ一-龠]+[^'\r\n]*)'|"([^"\r\n]*[ぁ-んァ-ヶ一-龠]+[^"\r\n]*)"/g;
           const matches = s.code.match(jpRegex);
           if (matches) totalCount += matches.length;
         } else {
@@ -628,7 +591,7 @@
         if (!transMap) continue;
         
         if (isScripts) {
-          const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+          const jpRegex = /'([^'\r\n]*[ぁ-んァ-ヶ一-龠]+[^'\r\n]*)'|"([^"\r\n]*[ぁ-んァ-ヶ一-龠]+[^"\r\n]*)"/g;
           let match;
           while ((match = jpRegex.exec(s.code)) !== null) {
             const text = match[1] || match[2] || '';
@@ -1068,7 +1031,7 @@
           let count = 0;
           const jpTexts: string[] = [];
           if (isScripts) {
-            const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+            const jpRegex = /'([^'\r\n]*[ぁ-んァ-ヶ一-龠]+[^'\r\n]*)'|"([^"\r\n]*[ぁ-んァ-ヶ一-龠]+[^"\r\n]*)"/g;
             let match;
             while ((match = jpRegex.exec(s.code)) !== null) {
               const text = match[1] || match[2] || '';
@@ -1274,7 +1237,7 @@
 
     if (!item.isGroup && item.scriptRef) {
       const script = item.scriptRef;
-      const jpRegex = /'([^']*[ぁ-んァ-ヶ一-龠]+[^']*)'|"([^"]*[ぁ-んァ-ヶ一-龠]+[^"]*)"/g;
+      const jpRegex = /'([^'\r\n]*[ぁ-んァ-ヶ一-龠]+[^'\r\n]*)'|"([^"\r\n]*[ぁ-んァ-ヶ一-龠]+[^"\r\n]*)"/g;
       let match;
       while ((match = jpRegex.exec(script.code)) !== null) {
           const text = match[1] || match[2] || '';
@@ -1842,7 +1805,9 @@ Original text: "${processingText}"`;
   }
 
   async function handleBatchValidate() {
-    const targets = [...filteredStrings]; // 현재 필터링된 항목들만 검증 대상
+    // 필터나 검색 여부와 관계없이 현재 데이터의 모든 항목(extractedStrings)을 대상으로 일괄 검증을 수행합니다.
+    // 이를 통해 '검증 오류' 필터가 켜진 상태에서 목록이 비어있더라도 일괄 검증이 정상 작동합니다.
+    const targets = [...extractedStrings]; 
     const total = targets.length;
     if (total === 0) return;
 
@@ -1882,7 +1847,8 @@ Original text: "${processingText}"`;
       
       saveCurrentTranslations();
       
-      const currentErrorCount = targets.filter(i => i.validationError).length;
+      // 최신 상태인 extractedStrings에서 직접 검증 오류 개수를 집계합니다 (stale reference 버그 해결)
+      const currentErrorCount = extractedStrings.filter(i => i.validationError).length;
       addLog(`[일괄 검증 완료] 검증 대상 중 문제 항목 ${currentErrorCount}개 발견`);
 
       // Clear timer and hide progress before blocking on message dialog
@@ -1891,9 +1857,9 @@ Original text: "${processingText}"`;
       showValidationProgress = false;
 
       if (currentErrorCount === 0) {
-        await message("검증 완료: 발견된 문제 항목이 없습니다! ✅", { title: "검증 완료", kind: "info" });
+        showToast("검증 완료: 발견된 문제 항목이 없습니다! ✅", "success", 4000);
       } else {
-        await message(`검증 완료: 총 ${currentErrorCount}개의 문제 항목이 발견되었습니다. ⚠️\n(빨간색 테두리와 경고 아이콘을 확인하세요.)`, { title: "검증 완료", kind: "warning" });
+        showToast(`검증 완료: 총 ${currentErrorCount}개의 문제 항목이 발견되었습니다. ⚠️\n(빨간색 테두리와 경고 아이콘을 확인하세요.)`, "warning", 5000);
       }
     } catch (e) {
       console.error("Batch validation error", e);
@@ -2038,9 +2004,9 @@ Original text: "${processingText}"`;
           newPath: newPath, 
           updatedScripts: updatedScripts 
         });
-        alert('성공적으로 저장되었습니다!');
+        showToast('성공적으로 저장되었습니다! 💾', 'success');
       } catch (e) {
-        alert('저장 실패: ' + e);
+        showToast('저장 실패: ' + e, 'error', 4000);
       }
     }
   }
@@ -2305,6 +2271,28 @@ Original text: "${processingText}"`;
   export function getStatus() {
     return { isTranslating, isLoading };
   }
+
+  // 토스트 알림 시스템
+  interface Toast {
+    id: number;
+    message: string;
+    type: 'success' | 'warning' | 'error' | 'info';
+    duration?: number;
+  }
+  let toasts = $state<Toast[]>([]);
+  let toastIdCounter = 0;
+
+  function showToast(message: string, type: 'success' | 'warning' | 'error' | 'info' = 'info', duration = 3000) {
+    const id = toastIdCounter++;
+    toasts = [...toasts, { id, message, type, duration }];
+    setTimeout(() => {
+      removeToast(id);
+    }, duration);
+  }
+
+  function removeToast(id: number) {
+    toasts = toasts.filter(t => t.id !== id);
+  }
 </script>
 
 <div class="app-container" class:drag-active={isDragging}>
@@ -2497,10 +2485,8 @@ Original text: "${processingText}"`;
         <span>대사 리스트</span>
         <span class="header-badge">{sidebarItems.filter(i => i.id !== "ALL_ITEMS").length}</span>
       </h3>
-      <ul class="script-list" bind:this={sidebarViewportEl} on:scroll={handleSidebarScroll}>
-        <li style="height: {sidebarTopSpacerHeight}px; padding: 0; margin: 0; border: none; background: transparent; cursor: default;"></li>
-        {#each visibleSidebarItems as item, i (item.id)}
-          {@const idx = sidebarStartIndex + i}
+      <ul class="script-list" bind:this={sidebarViewportEl}>
+        {#each sidebarItems as item, idx (item.id)}
           <li 
             class:active={selectedSidebarItem?.id === item.id} 
             class:disabled={isTranslating}
@@ -2519,7 +2505,6 @@ Original text: "${processingText}"`;
             {/if}
           </li>
         {/each}
-        <li style="height: {Math.max(0, sidebarTotalHeight - sidebarTopSpacerHeight - (visibleSidebarItems.length * sidebarEstimatedRowHeight))}px; padding: 0; margin: 0; border: none; background: transparent; cursor: default;"></li>
       </ul>
     </aside>
 
@@ -3003,6 +2988,22 @@ Original text: "${processingText}"`;
       {/if}
     </section>
   </main>
+
+  <!-- 토스트 알림 오버레이 -->
+  <div class="toast-container">
+    {#each toasts as toast (toast.id)}
+      <div class="toast-item toast-{toast.type}">
+        <span class="toast-icon">
+          {#if toast.type === 'success'}✅
+          {:else if toast.type === 'warning'}⚠️
+          {:else if toast.type === 'error'}🛑
+          {:else}ℹ️{/if}
+        </span>
+        <span class="toast-message">{toast.message}</span>
+        <button class="toast-close-btn" on:click={() => removeToast(toast.id)}>✕</button>
+      </div>
+    {/each}
+  </div>
 </div>
 
 <style lang="scss">
@@ -4211,5 +4212,99 @@ Original text: "${processingText}"`;
     height: 100%;
     background: #3b82f6;
     transition: width 0.3s ease;
+  }
+
+  /* 토스트 알림 시스템 스타일 */
+  .toast-container {
+    position: fixed;
+    top: 1.5rem;
+    right: 1.5rem;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    pointer-events: none;
+  }
+
+  .toast-item {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.85rem 1.25rem;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+    min-width: 300px;
+    max-width: 450px;
+    animation: toastSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    transition: all 0.2s ease;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+
+    .toast-icon {
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .toast-message {
+      flex: 1;
+      color: #f1f5f9;
+      font-size: 0.9rem;
+      font-weight: 500;
+      line-height: 1.4;
+      white-space: pre-line;
+    }
+
+    .toast-close-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 0.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.2s;
+      
+      &:hover {
+        color: #f1f5f9;
+      }
+    }
+
+    &.toast-success {
+      border-left: 4px solid #10b981;
+      .toast-icon { color: #10b981; }
+    }
+
+    &.toast-warning {
+      border-left: 4px solid #f59e0b;
+      .toast-icon { color: #f59e0b; }
+    }
+
+    &.toast-error {
+      border-left: 4px solid #ef4444;
+      .toast-icon { color: #ef4444; }
+    }
+
+    &.toast-info {
+      border-left: 4px solid #3b82f6;
+      .toast-icon { color: #3b82f6; }
+    }
+  }
+
+  @keyframes toastSlideIn {
+    from {
+      transform: translateX(120%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
   }
 </style>

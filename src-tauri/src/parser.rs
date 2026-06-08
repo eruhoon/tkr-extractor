@@ -120,6 +120,8 @@ pub fn parse_rvdata(path: &str) -> Result<Vec<ScriptEntry>, String> {
         parse_database_items(value, "Armor")
     } else if filename.starts_with("enemies") {
         parse_database_items(value, "Enemy")
+    } else if filename.starts_with("system") {
+        parse_system(value)
     } else {
         // 미지원 파일도 일단 데이터베이스 형태로 읽어본다 (유연성 확보)
         parse_database_items(value, "Data")
@@ -145,6 +147,8 @@ pub fn save_rvdata(original_path: &str, new_path: &str, updated_scripts: Vec<Scr
         save_map_events(&mut value, updated_scripts)?;
     } else if filename.starts_with("commonevents") {
         save_common_events(&mut value, updated_scripts)?;
+    } else if filename.starts_with("system") {
+        save_system(&mut value, updated_scripts)?;
     } else if filename.starts_with("items")
         || filename.starts_with("skills")
         || filename.starts_with("actors")
@@ -631,5 +635,166 @@ fn save_database_items(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> 
             }
         }
     }
+    Ok(())
+}
+
+// System.rvdata / System.rvdata2 파서
+fn parse_system(value: Value) -> Result<Vec<ScriptEntry>, String> {
+    let mut entries = Vec::new();
+    let fields = get_fields(&value)?;
+
+    // 1. game_title
+    if let Some(val) = fields.get(&Symbol::from("@game_title")) {
+        if let Some(text) = get_string_value(val) {
+            if has_japanese(&text) {
+                entries.push(ScriptEntry {
+                    id: 1,
+                    title: "System - Game Title".to_string(),
+                    code: text,
+                });
+            }
+        }
+    }
+
+    // 2. currency_unit
+    if let Some(val) = fields.get(&Symbol::from("@currency_unit")) {
+        if let Some(text) = get_string_value(val) {
+            if has_japanese(&text) {
+                entries.push(ScriptEntry {
+                    id: 2,
+                    title: "System - Currency Unit".to_string(),
+                    code: text,
+                });
+            }
+        }
+    }
+
+    // Helper to parse string arrays
+    let mut parse_string_array = |field_name: &str, base_id: i64, prefix: &str| {
+        if let Some(Value::Array(arr)) = fields.get(&Symbol::from(field_name)) {
+            for (idx, val) in arr.iter().enumerate() {
+                if let Some(text) = get_string_value(val) {
+                    if has_japanese(&text) {
+                        entries.push(ScriptEntry {
+                            id: base_id + idx as i64,
+                            title: format!("System - {} [{}]", prefix, idx),
+                            code: text,
+                        });
+                    }
+                }
+            }
+        }
+    };
+
+    parse_string_array("@elements", 1000, "Element");
+    parse_string_array("@skill_types", 2000, "Skill Type");
+    parse_string_array("@weapon_types", 3000, "Weapon Type");
+    parse_string_array("@armor_types", 4000, "Armor Type");
+
+    // Terms
+    if let Some(terms_val) = fields.get(&Symbol::from("@terms")) {
+        if let Ok(terms_fields) = get_fields(terms_val) {
+            let mut parse_terms_array = |field_name: &str, base_id: i64, prefix: &str| {
+                if let Some(Value::Array(arr)) = terms_fields.get(&Symbol::from(field_name)) {
+                    for (idx, val) in arr.iter().enumerate() {
+                        if let Some(text) = get_string_value(val) {
+                            if has_japanese(&text) {
+                                entries.push(ScriptEntry {
+                                    id: base_id + idx as i64,
+                                    title: format!("System - {} [{}]", prefix, idx),
+                                    code: text,
+                                });
+                            }
+                        }
+                    }
+                }
+            };
+
+            parse_terms_array("@basic", 10000, "Term Basic");
+            parse_terms_array("@params", 20000, "Term Param");
+            parse_terms_array("@etypes", 30000, "Term Etype");
+            parse_terms_array("@commands", 40000, "Term Command");
+        }
+    }
+
+    Ok(entries)
+}
+
+fn save_system(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> Result<(), String> {
+    let fields = get_fields_mut(value)?;
+
+    for entry in updated_entries {
+        if entry.id == 1 {
+            if let Some(val) = fields.get_mut(&Symbol::from("@game_title")) {
+                set_string_value(val, entry.code)?;
+            }
+        } else if entry.id == 2 {
+            if let Some(val) = fields.get_mut(&Symbol::from("@currency_unit")) {
+                set_string_value(val, entry.code)?;
+            }
+        } else if entry.id >= 1000 && entry.id < 2000 {
+            let idx = (entry.id - 1000) as usize;
+            if let Some(Value::Array(arr)) = fields.get_mut(&Symbol::from("@elements")) {
+                if idx < arr.len() {
+                    set_string_value(&mut arr[idx], entry.code)?;
+                }
+            }
+        } else if entry.id >= 2000 && entry.id < 3000 {
+            let idx = (entry.id - 2000) as usize;
+            if let Some(Value::Array(arr)) = fields.get_mut(&Symbol::from("@skill_types")) {
+                if idx < arr.len() {
+                    set_string_value(&mut arr[idx], entry.code)?;
+                }
+            }
+        } else if entry.id >= 3000 && entry.id < 4000 {
+            let idx = (entry.id - 3000) as usize;
+            if let Some(Value::Array(arr)) = fields.get_mut(&Symbol::from("@weapon_types")) {
+                if idx < arr.len() {
+                    set_string_value(&mut arr[idx], entry.code)?;
+                }
+            }
+        } else if entry.id >= 4000 && entry.id < 5000 {
+            let idx = (entry.id - 4000) as usize;
+            if let Some(Value::Array(arr)) = fields.get_mut(&Symbol::from("@armor_types")) {
+                if idx < arr.len() {
+                    set_string_value(&mut arr[idx], entry.code)?;
+                }
+            }
+        } else if entry.id >= 10000 && entry.id < 50000 {
+            if let Some(terms_val) = fields.get_mut(&Symbol::from("@terms")) {
+                let terms_fields = get_fields_mut(terms_val)?;
+                if entry.id >= 10000 && entry.id < 20000 {
+                    let idx = (entry.id - 10000) as usize;
+                    if let Some(Value::Array(arr)) = terms_fields.get_mut(&Symbol::from("@basic")) {
+                        if idx < arr.len() {
+                            set_string_value(&mut arr[idx], entry.code)?;
+                        }
+                    }
+                } else if entry.id >= 20000 && entry.id < 30000 {
+                    let idx = (entry.id - 20000) as usize;
+                    if let Some(Value::Array(arr)) = terms_fields.get_mut(&Symbol::from("@params")) {
+                        if idx < arr.len() {
+                            set_string_value(&mut arr[idx], entry.code)?;
+                        }
+                    }
+                } else if entry.id >= 30000 && entry.id < 40000 {
+                    let idx = (entry.id - 30000) as usize;
+                    if let Some(Value::Array(arr)) = terms_fields.get_mut(&Symbol::from("@etypes")) {
+                        if idx < arr.len() {
+                            set_string_value(&mut arr[idx], entry.code)?;
+                        }
+                    }
+                } else if entry.id >= 40000 && entry.id < 50000 {
+                    let idx = (entry.id - 40000) as usize;
+                    if let Some(Value::Array(arr)) = terms_fields.get_mut(&Symbol::from("@commands")) {
+                        if idx < arr.len() {
+                            set_string_value(&mut arr[idx], entry.code)?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }

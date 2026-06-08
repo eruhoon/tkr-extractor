@@ -1381,7 +1381,10 @@ Rules:
 5. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
 6. Preserve line breaks (\\n) exactly as they appear in the original text.
 7. If a bracket/parenthesis is opened but not closed in the original Japanese text (or vice versa), do NOT attempt to close it or add the missing bracket in the Korean translation. Keep the unbalanced brackets exactly as they are in the original text.
-${isScriptCodeBlock ? '8. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
+8. Handle colloquial game dialogue markers and expressions naturally:
+   - A standalone or ending small tsu (e.g. "っ", "っ！", "…っ") represents a gasp, groan, breath, or abrupt cutoff of speech. Do not ignore it or translate it literally (like "tsu"). Translate it into a natural Korean expression of exclamation, sigh, or cutoff (e.g., "앗!", "윽!", "읏…", "흡!", or simply "…!").
+   - Conversational starters or particles such as "だって" (datte) or "だって…" indicate a defensive, pleading, or explaining tone. Translate them to colloquial Korean starters like "그치만...", "하지만...", "그야..." instead of literal dictionary translations.
+${isScriptCodeBlock ? '9. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
 CRITICAL: The [Korean Translation] section MUST be written in Korean (한국어) only. Do not use English.
 
 Original text: "${processingText}"`;
@@ -1396,7 +1399,10 @@ Rules:
 6. If the text looks like a source code comment (e.g. containing #) or variable assignment (e.g. containing =), preserve all symbols like #, =, and variable names exactly, only translating the Japanese text.
 7. Preserve line breaks (\\n) exactly as they appear in the original text.
 8. If a bracket/parenthesis is opened but not closed in the original Japanese text (or vice versa), do NOT attempt to close it or add the missing bracket in the Korean translation. Keep the unbalanced brackets exactly as they are in the original text.
-${isScriptCodeBlock ? '9. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
+9. Handle colloquial game dialogue markers and expressions naturally:
+   - A standalone or ending small tsu (e.g. "っ", "っ！", "…っ") represents a gasp, groan, breath, or abrupt cutoff of speech. Do not ignore it or translate it literally (like "tsu"). Translate it into a natural Korean expression of exclamation, sigh, or cutoff (e.g., "앗!", "윽!", "읏…", "흡!", or simply "…!").
+   - Conversational starters or particles such as "だって" (datte) or "だって…" indicate a defensive, pleading, or explaining tone. Translate them to colloquial Korean starters like "그치만...", "하지만...", "그야..." instead of literal dictionary translations.
+${isScriptCodeBlock ? '10. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
 CRITICAL: The final output MUST be written in Korean (한국어). Do not use English.
 
 Original text: "${processingText}"`;

@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use serde::{Serialize, Deserialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ScriptEntry {
     pub id: i64,
     pub title: String,
@@ -85,6 +85,35 @@ fn has_japanese(text: &str) -> bool {
     })
 }
 
+// TES main.rvdata2 XOR 복호화 / 암호화 헬퍼
+fn decrypt_x(text: &[u8]) -> Vec<u8> {
+    let key = b"6bd01ae1bcbf47ad16c8ede556700a1a2256e7772bb36e9717260cd783e1f4c34ef21c46fa888e61dd8ea33ef54bef5ea239c04e28685ffd1bf8921a798a1319";
+    let mut result = text.to_vec();
+    let mut index = 0;
+    while index < result.len() {
+        let k = if result.len() - index > key.len() { key.len() } else { result.len() - index };
+        for i in 0..k {
+            result[index + i] ^= key[i];
+        }
+        index += k;
+    }
+    result
+}
+
+fn encrypt_x(text: &[u8]) -> Vec<u8> {
+    decrypt_x(text)
+}
+
+// 시나리오 키 해싱 헬퍼 (FNV-1a)
+fn hash_string(s: &str) -> i64 {
+    let mut hash: u32 = 2166136261;
+    for c in s.bytes() {
+        hash ^= c as u32;
+        hash = hash.wrapping_mul(16777619);
+    }
+    (hash & 0x7FFFFFFF) as i64
+}
+
 // ==========================================
 // 2. 통합 진입점 정의 (파일명 자동 감지)
 // ==========================================
@@ -122,6 +151,8 @@ pub fn parse_rvdata(path: &str) -> Result<Vec<ScriptEntry>, String> {
         parse_database_items(value, "Enemy")
     } else if filename.starts_with("system") {
         parse_system(value)
+    } else if filename.starts_with("main") {
+        parse_main_tes(value)
     } else {
         // 미지원 파일도 일단 데이터베이스 형태로 읽어본다 (유연성 확보)
         parse_database_items(value, "Data")
@@ -149,6 +180,8 @@ pub fn save_rvdata(original_path: &str, new_path: &str, updated_scripts: Vec<Scr
         save_common_events(&mut value, updated_scripts)?;
     } else if filename.starts_with("system") {
         save_system(&mut value, updated_scripts)?;
+    } else if filename.starts_with("main") {
+        save_main_tes(&mut value, updated_scripts)?;
     } else if filename.starts_with("items")
         || filename.starts_with("skills")
         || filename.starts_with("actors")
@@ -797,4 +830,257 @@ fn save_system(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> Result<(
     }
 
     Ok(())
+}
+
+fn parse_main_tes(value: Value) -> Result<Vec<ScriptEntry>, String> {
+    let mut entries = Vec::new();
+
+    let encrypted_bytes = match &value {
+        Value::String(s) => s.data.clone(),
+        Value::Instance(inst) => {
+            if let Value::String(s) = &*inst.value {
+                s.data.clone()
+            } else {
+                return Err("Invalid main.rvdata2 structure: expected String inside Instance".to_string());
+            }
+        }
+        _ => return Err("Invalid main.rvdata2 structure: expected String".to_string()),
+    };
+
+    let decrypted_bytes = decrypt_x(&encrypted_bytes);
+
+    let mut decoder = ZlibDecoder::new(decrypted_bytes.as_slice());
+    let mut decompressed_bytes = Vec::new();
+    decoder.read_to_end(&mut decompressed_bytes)
+        .map_err(|e| format!("Zlib decompression failed: {}", e))?;
+
+    let inner_val: Value = alox_48::from_bytes(&decompressed_bytes)
+        .map_err(|e| format!("Inner Marshal load failed: {:?}", e))?;
+
+    if let Value::Array(arr) = inner_val {
+        if arr.len() >= 2 {
+            let events_hash_val = &arr[1];
+            if let Value::Hash(events_hash) = events_hash_val {
+                for (scenario_key_val, commands_array_val) in events_hash {
+                    let scenario_name = match get_string_value(scenario_key_val) {
+                        Some(name) => name,
+                        None => continue,
+                    };
+
+                    let scenario_hash = hash_string(&scenario_name);
+
+                    if let Value::Array(commands) = commands_array_val {
+                        for (cmd_idx, cmd_val) in commands.iter().enumerate() {
+                            let cmd_fields = get_fields(cmd_val)?;
+                            let code_val = cmd_fields.get(&Symbol::from("@code"))
+                                .ok_or_else(|| "Command @code not found".to_string())?;
+                            let code = match code_val {
+                                Value::Integer(c) => *c,
+                                _ => 0,
+                            };
+
+                            let params_val = cmd_fields.get(&Symbol::from("@parameters"))
+                                .ok_or_else(|| "Command @parameters not found".to_string())?;
+
+                            if let Value::Array(params) = params_val {
+                                if code == 401 || code == 101 {
+                                    if !params.is_empty() {
+                                        if let Some(text) = get_string_value(&params[0]) {
+                                            if has_japanese(&text) {
+                                                let base_id = scenario_hash * 10_000_000 + (cmd_idx as i64) * 10;
+                                                entries.push(ScriptEntry {
+                                                    id: base_id,
+                                                    title: format!("Scenario {} - Line {}", scenario_name, cmd_idx),
+                                                    code: text,
+                                                });
+                                            }
+                                        }
+                                    }
+                                } else if code == 102 {
+                                    if !params.is_empty() {
+                                        if let Value::Array(choices) = &params[0] {
+                                            for (choice_idx, choice_val) in choices.iter().enumerate() {
+                                                if let Some(text) = get_string_value(choice_val) {
+                                                    if has_japanese(&text) {
+                                                        let base_id = scenario_hash * 10_000_000 + (cmd_idx as i64) * 10 + (choice_idx as i64) + 1;
+                                                        entries.push(ScriptEntry {
+                                                            id: base_id,
+                                                            title: format!("Scenario {} - Line {} [Choice {}]", scenario_name, cmd_idx, choice_idx + 1),
+                                                            code: text,
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if code == 402 {
+                                    if params.len() > 1 {
+                                        if let Some(text) = get_string_value(&params[1]) {
+                                            if has_japanese(&text) {
+                                                let base_id = scenario_hash * 10_000_000 + (cmd_idx as i64) * 10;
+                                                entries.push(ScriptEntry {
+                                                    id: base_id,
+                                                    title: format!("Scenario {} - Line {} [When Choice]", scenario_name, cmd_idx),
+                                                    code: text,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    entries.sort_by_key(|e| e.id);
+    Ok(entries)
+}
+
+fn save_main_tes(value: &mut Value, updated_entries: Vec<ScriptEntry>) -> Result<(), String> {
+    let encrypted_bytes = match &value {
+        Value::String(s) => s.data.clone(),
+        Value::Instance(inst) => {
+            if let Value::String(s) = &*inst.value {
+                s.data.clone()
+            } else {
+                return Err("Invalid main.rvdata2 structure: expected String inside Instance".to_string());
+            }
+        }
+        _ => return Err("Invalid main.rvdata2 structure: expected String".to_string()),
+    };
+
+    let decrypted_bytes = decrypt_x(&encrypted_bytes);
+    let mut decoder = ZlibDecoder::new(decrypted_bytes.as_slice());
+    let mut decompressed_bytes = Vec::new();
+    decoder.read_to_end(&mut decompressed_bytes)
+        .map_err(|e| format!("Zlib decompression failed: {}", e))?;
+
+    let mut inner_val: Value = alox_48::from_bytes(&decompressed_bytes)
+        .map_err(|e| format!("Inner Marshal load failed: {:?}", e))?;
+
+    if let Value::Array(ref mut arr) = inner_val {
+        if arr.len() >= 2 {
+            let events_hash_val = &mut arr[1];
+            if let Value::Hash(ref mut events_hash) = events_hash_val {
+                for entry in updated_entries {
+                    let scenario_hash = entry.id / 10_000_000;
+                    let cmd_idx = ((entry.id % 10_000_000) / 10) as usize;
+                    let choice_offset = entry.id % 10;
+
+                    let mut matched_commands = None;
+                    for (scenario_key_val, commands_array_val) in events_hash.iter_mut() {
+                        if let Some(name) = get_string_value(scenario_key_val) {
+                            if hash_string(&name) == scenario_hash {
+                                if let Value::Array(commands) = commands_array_val {
+                                    matched_commands = Some(commands);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(commands) = matched_commands {
+                        if let Some(cmd_val) = commands.get_mut(cmd_idx) {
+                            let cmd_fields = get_fields_mut(cmd_val)?;
+                            let code_val = cmd_fields.get(&Symbol::from("@code"));
+                            let code = match code_val {
+                                Some(Value::Integer(c)) => *c,
+                                _ => 0,
+                            };
+
+                            let params_val = cmd_fields.get_mut(&Symbol::from("@parameters"))
+                                .ok_or_else(|| "Command @parameters not found".to_string())?;
+
+                            if let Value::Array(params) = params_val {
+                                if code == 401 || code == 101 || code == 402 {
+                                    let text_idx = if code == 402 { 1 } else { 0 };
+                                    if params.len() > text_idx {
+                                        set_string_value(&mut params[text_idx], entry.code)?;
+                                    }
+                                } else if code == 102 {
+                                    if !params.is_empty() {
+                                        if let Value::Array(choices) = &mut params[0] {
+                                            if choice_offset > 0 && (choice_offset as usize) - 1 < choices.len() {
+                                                set_string_value(&mut choices[(choice_offset as usize) - 1], entry.code)?;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let updated_bytes = alox_48::to_bytes(&inner_val)
+        .map_err(|e| format!("Marshal serialize failed: {:?}", e))?;
+
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    use std::io::Write;
+    encoder.write_all(&updated_bytes).map_err(|e| e.to_string())?;
+    let compressed_bytes = encoder.finish().map_err(|e| e.to_string())?;
+
+    let re_encrypted_bytes = encrypt_x(&compressed_bytes);
+
+    match value {
+        Value::String(s) => {
+            s.data = re_encrypted_bytes;
+        }
+        Value::Instance(inst) => {
+            if let Value::String(s) = &mut *inst.value {
+                s.data = re_encrypted_bytes;
+            } else {
+                return Err("Failed to write back: inner value is not String".to_string());
+            }
+        }
+        _ => return Err("Failed to write back: outer value is not String".to_string()),
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_main_tes_parse_and_save() {
+        let path = "C:\\Users\\CHC\\Desktop\\ELE\u{3081}んつ\u{ff01}Ver2.09\\Game_Extracted\\Data\\main.rvdata2";
+        if std::path::Path::new(path).exists() {
+            println!("Testing parse_rvdata for main.rvdata2...");
+            let parsed = parse_rvdata(path).unwrap();
+            println!("Successfully parsed {} entries.", parsed.len());
+            assert!(!parsed.is_empty(), "Should extract at least some dialogue");
+
+            // Verify a few entries
+            for entry in parsed.iter().take(5) {
+                println!("Extracted Entry: ID={}, Title={}, Code={}", entry.id, entry.title, entry.code);
+            }
+
+            // Test save
+            println!("Testing save_rvdata for main.rvdata2...");
+            let temp_output = "C:\\Users\\CHC\\Desktop\\ELE\u{3081}んつ\u{ff01}Ver2.09\\Game_Extracted\\Data\\main_test_output.rvdata2";
+            
+            let mut modified = parsed.clone();
+            modified[0].code = "テスト翻訳完了".to_string();
+
+            save_rvdata(path, temp_output, modified).unwrap();
+            println!("Saved to {}", temp_output);
+
+            // Re-read and check if modification is saved
+            let re_parsed = parse_rvdata(temp_output).unwrap();
+            assert_eq!(re_parsed[0].code, "テスト翻訳完了");
+            println!("Verification successful! Saved modification matches: {}", re_parsed[0].code);
+
+            // Clean up the temp output file
+            let _ = std::fs::remove_file(temp_output);
+        } else {
+            println!("Skip test: main.rvdata2 not found at standard path.");
+        }
+    }
 }

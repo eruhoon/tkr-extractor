@@ -8,6 +8,9 @@ Rules:
 1. Maintain the meaning and nuance of the original Japanese.
 2. Do not explain the translation, just output the exact Korean translation.
 3. Keep proper nouns and context consistent if possible.
+4. Handle colloquial game dialogue markers and expressions naturally:
+   - A standalone or ending small tsu (e.g. "っ", "っ！", "…っ") represents a gasp, groan, breath, or abrupt cutoff of speech. Do not ignore it or translate it literally (like "tsu"). Translate it into a natural Korean expression of exclamation, sigh, or cutoff (e.g., "앗!", "윽!", "읏…", "흡!", or simply "…!").
+   - Conversational starters or particles such as "だって" (datte) or "だって…" indicate a defensive, pleading, or explaining tone. Translate them to colloquial Korean starters like "그치만...", "하지만...", "그야..." instead of literal dictionary translations.
 
 Original text: "${sentence}"`;
 

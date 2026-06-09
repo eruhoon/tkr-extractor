@@ -152,7 +152,7 @@
 
   <header class="glass-panel header">
     <div class="header-actions">
-      <button class="btn btn-success" on:click={startDecompile} disabled={!inputPath || isRunning}>
+      <button class="btn btn-success" onclick={startDecompile} disabled={!inputPath || isRunning}>
         {isRunning ? '디컴파일 중...' : '디컴파일 시작'}
       </button>
     </div>
@@ -171,7 +171,7 @@
             bind:value={inputPath}
             readonly
           />
-          <button class="btn btn-primary" on:click={browseFile} disabled={isRunning}>
+          <button class="btn btn-primary" onclick={browseFile} disabled={isRunning}>
             찾아보기
           </button>
         </div>
@@ -187,7 +187,7 @@
             bind:value={outputPath}
             readonly
           />
-          <button class="btn btn-primary" on:click={browseOutputDir} disabled={isRunning}>
+          <button class="btn btn-primary" onclick={browseOutputDir} disabled={isRunning}>
             찾아보기
           </button>
         </div>
@@ -224,7 +224,7 @@
       <!-- 디컴파일 완료 후 빠른 열기 버튼 -->
       {#if !isRunning && totalFiles > 0 && currentCount === totalFiles}
         <div class="success-actions">
-          <button class="btn btn-folder-open" on:click={openOutputFolder}>
+          <button class="btn btn-folder-open" onclick={openOutputFolder}>
             📂 추출된 폴더 열기
           </button>
         </div>
@@ -284,14 +284,6 @@
     padding: 1rem 2rem;
     position: relative;
     z-index: 10;
-    
-    h1 {
-      font-size: 1.5rem;
-      font-weight: 600;
-      background: linear-gradient(to right, #60a5fa, #a78bfa);
-      -webkit-background-clip: text;
-      color: transparent;
-    }
 
     .header-actions {
       display: flex;

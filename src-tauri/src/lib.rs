@@ -140,7 +140,7 @@ fn read_image_file(path: String) -> Result<Vec<u8>, String> {
     std::fs::read(&path).map_err(|e| e.to_string())
 }
 
-use image::{Rgba, RgbaImage};
+use image::Rgba;
 use imageproc::drawing::{draw_filled_rect_mut, draw_text_mut};
 use imageproc::rect::Rect;
 use ab_glyph::FontRef;

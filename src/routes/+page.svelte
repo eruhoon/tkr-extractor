@@ -102,21 +102,21 @@
       <button 
         class="tab-btn" 
         class:active={activeTab === 'decompile'} 
-        on:click={() => changeTab('decompile')}
+        onclick={() => changeTab('decompile')}
       >
         <span class="icon">📦</span> RGSS3A 디컴파일
       </button>
       <button 
         class="tab-btn" 
         class:active={activeTab === 'script'} 
-        on:click={() => changeTab('script')}
+        onclick={() => changeTab('script')}
       >
         <span class="icon">📄</span> 스크립트 번역
       </button>
       <button 
         class="tab-btn" 
         class:active={activeTab === 'image'} 
-        on:click={() => changeTab('image')}
+        onclick={() => changeTab('image')}
       >
         <span class="icon">🖼️</span> 이미지 번역
       </button>
@@ -124,7 +124,7 @@
 
     <button 
       class="settings-btn" 
-      on:click={() => showSettingsModal = true}
+      onclick={() => showSettingsModal = true}
       title="전체 설정"
     >
       <span class="icon">⚙️</span>
@@ -133,11 +133,17 @@
 
   <!-- 설정 모달 -->
   {#if showSettingsModal}
-    <div class="modal-backdrop" on:click={() => showSettingsModal = false} role="presentation">
-      <div class="modal-content glass-panel" on:click|stopPropagation role="dialog" aria-modal="true">
+    <div 
+      class="modal-backdrop" 
+      onclick={(e) => { if (e.target === e.currentTarget) showSettingsModal = false; }} 
+      onkeydown={(e) => { if (e.key === 'Escape') showSettingsModal = false; }}
+      role="button" 
+      tabindex="-1"
+    >
+      <div class="modal-content glass-panel" role="dialog" aria-modal="true">
         <div class="modal-header">
           <h2>⚙️ 전체 설정</h2>
-          <button class="close-btn" on:click={() => showSettingsModal = false}>✕</button>
+          <button class="close-btn" onclick={() => showSettingsModal = false}>✕</button>
         </div>
         <div class="modal-body">
           <div class="setting-item">
@@ -150,7 +156,7 @@
                 id="confirm-staged-load-checkbox"
                 type="checkbox" 
                 bind:checked={confirmStagedLoad} 
-                on:change={toggleConfirmStagedLoad}
+                onchange={toggleConfirmStagedLoad}
               >
               <span class="slider round"></span>
             </label>

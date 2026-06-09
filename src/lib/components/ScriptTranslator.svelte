@@ -2310,10 +2310,11 @@ Original text: "${processingText}"`;
 
   <header class="glass-panel header">
     <div class="api-section" style="display: flex; align-items: center; gap: 0.5rem;">
-      <label style="font-weight: 500; color: var(--text-secondary); white-space: nowrap; margin: 0;">모델:</label>
+      <label for="model-selector-script" style="font-weight: 500; color: var(--text-secondary); white-space: nowrap; margin: 0;">모델:</label>
       <select
+        id="model-selector-script"
         bind:value={selectedModelId}
-        on:change={onModelChange}
+        onchange={onModelChange}
         class="api-input"
         style="cursor: pointer;"
         disabled={isTranslating || llamaServerStatus === 'starting' || llamaServerStatus === 'downloading'}
@@ -2341,10 +2342,10 @@ Original text: "${processingText}"`;
             class:llama-dot-warn={llamaServerStatus === 'starting'}
             class:llama-dot-download={llamaServerStatus === 'downloading'}
             class:llama-dot-err={llamaServerStatus === 'idle' || llamaServerStatus === 'error'}
-            on:click={selectLlamaServerPath}
+            onclick={selectLlamaServerPath}
             role="button"
             tabindex="0"
-            on:keydown={(e) => e.key === 'Enter' && selectLlamaServerPath()}
+            onkeydown={(e) => e.key === 'Enter' && selectLlamaServerPath()}
           ></div>
           <div class="llama-tooltip"
             class:llama-tooltip-ok={llamaServerStatus === 'ready'}
@@ -2394,7 +2395,7 @@ Original text: "${processingText}"`;
     </div>
 
     <div class="header-actions" style="display: flex; align-items: center; gap: 0.8rem;">
-      <button class="btn" on:click={openFolder} disabled={isLoading || isTranslating || isValidating}>
+      <button class="btn" onclick={openFolder} disabled={isLoading || isTranslating || isValidating}>
         {isLoading ? '불러오는 중...' : '📂 폴더 열기'}
       </button>
 
@@ -2403,14 +2404,14 @@ Original text: "${processingText}"`;
           <button 
             type="button" 
             class="btn-arrow" 
-            on:click={selectPrevFile} 
+            onclick={selectPrevFile} 
             disabled={isTranslating || isLoading || rvdataFiles.length <= 1 || isValidating} 
             title="이전 파일"
           >
             ◀
           </button>
           
-          <select bind:value={selectedFileInFolder} on:change={handleFolderFileChange} class="api-input" style="width: auto; max-width: 200px; height: 38px; cursor: pointer; padding: 0.55rem 2rem 0.55rem 1rem; margin: 0;" disabled={isTranslating || isLoading || isValidating}>
+          <select bind:value={selectedFileInFolder} onchange={handleFolderFileChange} class="api-input" style="width: auto; max-width: 200px; height: 38px; cursor: pointer; padding: 0.55rem 2rem 0.55rem 1rem; margin: 0;" disabled={isTranslating || isLoading || isValidating}>
             <option value="">-- 파일 선택 --</option>
             {#each rvdataFiles as file}
               <option value={file}>
@@ -2426,7 +2427,7 @@ Original text: "${processingText}"`;
           <button 
             type="button" 
             class="btn-arrow" 
-            on:click={selectNextFile} 
+            onclick={selectNextFile} 
             disabled={isTranslating || isLoading || rvdataFiles.length <= 1 || isValidating} 
             title="다음 파일"
           >
@@ -2448,11 +2449,11 @@ Original text: "${processingText}"`;
       {/if}
 
       {#if selectedFolder}
-        <button class="btn btn-success" on:click={saveFolderTranslated} disabled={isTranslating || isLoading || rvdataFiles.length === 0 || isValidating}>
+        <button class="btn btn-success" onclick={saveFolderTranslated} disabled={isTranslating || isLoading || rvdataFiles.length === 0 || isValidating}>
           폴더 전체 변환/저장
         </button>
       {/if}
-      <button class="btn btn-success" on:click={saveFile} disabled={scripts.length === 0 || isTranslating || isLoading || isValidating}>
+      <button class="btn btn-success" onclick={saveFile} disabled={scripts.length === 0 || isTranslating || isLoading || isValidating}>
         복사본으로 변환/저장
       </button>
     </div>
@@ -2493,22 +2494,27 @@ Original text: "${processingText}"`;
       </h3>
       <ul class="script-list" bind:this={sidebarViewportEl}>
         {#each sidebarItems as item, idx (item.id)}
-          <li 
-            class:active={selectedSidebarItem?.id === item.id} 
-            class:disabled={isTranslating}
-            on:click={() => {
-              if (isTranslating) return;
-              saveCurrentTranslations();
-              selectSidebarItem(item);
-            }}
-          >
-            <span class="id">{idx}</span>
-            <span class="title">{item.title || 'Untitled'}</span>
-            {#if item.count !== undefined && item.count > 0}
-              <span class="count-badge" class:fully-translated={item.completedCount === item.count} class:has-validation-error={item.hasValidationError}>
-                {item.completedCount}/{item.count}
-              </span>
-            {/if}
+          <li class="script-item-wrap">
+            <button 
+              type="button"
+              class="script-item-btn"
+              class:active={selectedSidebarItem?.id === item.id} 
+              class:disabled={isTranslating}
+              onclick={() => {
+                if (isTranslating) return;
+                saveCurrentTranslations();
+                selectSidebarItem(item);
+              }}
+              disabled={isTranslating}
+            >
+              <span class="id">{idx}</span>
+              <span class="title">{item.title || 'Untitled'}</span>
+              {#if item.count !== undefined && item.count > 0}
+                <span class="count-badge" class:fully-translated={item.completedCount === item.count} class:has-validation-error={item.hasValidationError}>
+                  {item.completedCount}/{item.count}
+                </span>
+              {/if}
+            </button>
           </li>
         {/each}
       </ul>
@@ -2527,30 +2533,30 @@ Original text: "${processingText}"`;
             {/if}
           </h2>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showManualTranslatePanel = !showManualTranslatePanel; if (showManualTranslatePanel) { showGlossaryPanel = false; showDebugPanel = false; } }} disabled={isValidating || isTranslating || isLoading}>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" onclick={() => { showManualTranslatePanel = !showManualTranslatePanel; if (showManualTranslatePanel) { showGlossaryPanel = false; showDebugPanel = false; } }} disabled={isValidating || isTranslating || isLoading}>
               {showManualTranslatePanel ? '⚙️ 번역 테스트 닫기' : '🌐 번역 테스트'}
             </button>
-            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showGlossaryPanel = !showGlossaryPanel; if (showGlossaryPanel) { showManualTranslatePanel = false; showDebugPanel = false; } }} disabled={isValidating || isTranslating || isLoading}>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" onclick={() => { showGlossaryPanel = !showGlossaryPanel; if (showGlossaryPanel) { showManualTranslatePanel = false; showDebugPanel = false; } }} disabled={isValidating || isTranslating || isLoading}>
               {showGlossaryPanel ? '📖 용어 사전 닫기' : '📘 용어 사전 관리'}
             </button>
-            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" on:click={() => { showDebugPanel = !showDebugPanel; if (showDebugPanel) { showManualTranslatePanel = false; showGlossaryPanel = false; } }} disabled={isValidating || isTranslating || isLoading}>
+            <button class="btn" style="background-color: transparent; border: 1px solid #475569; color: #94a3b8; padding: 0 12px; height: 32px; font-size: 0.85rem;" onclick={() => { showDebugPanel = !showDebugPanel; if (showDebugPanel) { showManualTranslatePanel = false; showGlossaryPanel = false; } }} disabled={isValidating || isTranslating || isLoading}>
               {showDebugPanel ? '🛠️ 디버그 로그 닫기' : '⚙️ 디버그 로그 보기'}
             </button>
             {#if isTranslating && batchTotal > 0}
               <span style="color: var(--accent-color); font-weight: bold; white-space: nowrap; font-size: 0.9rem; margin-right: 0.5rem;">
                 {batchCompleted} / {batchTotal} 완료
               </span>
-              <button class="btn" style="background-color: #ef4444;" on:click={cancelBatchTranslation}>
+              <button class="btn" style="background-color: #ef4444;" onclick={cancelBatchTranslation}>
                 중단하기
               </button>
             {:else}
-              <button class="btn" on:click={() => handleBatchTranslate('normal')} disabled={extractedStrings.length === 0 || isValidating || isLoading}>
+              <button class="btn" onclick={() => handleBatchTranslate('normal')} disabled={extractedStrings.length === 0 || isValidating || isLoading}>
                 일괄 번역
               </button>
-              <button class="btn btn-detailed" on:click={() => handleBatchTranslate('detailed')} disabled={extractedStrings.length === 0 || isValidating || isLoading}>
+              <button class="btn btn-detailed" onclick={() => handleBatchTranslate('detailed')} disabled={extractedStrings.length === 0 || isValidating || isLoading}>
                 자세히 번역
               </button>
-              <button class="btn" style="background-color: #7c3aed;" on:click={handleBatchValidate} disabled={extractedStrings.length === 0 || isTranslating || isValidating || isLoading}>
+              <button class="btn" style="background-color: #7c3aed;" onclick={handleBatchValidate} disabled={extractedStrings.length === 0 || isTranslating || isValidating || isLoading}>
                 일괄 검증
               </button>
             {/if}
@@ -2571,7 +2577,7 @@ Original text: "${processingText}"`;
               <input type="text" bind:value={newGlossaryJp} placeholder="일본어 원문 (예: 薬草)" class="glossary-input" />
               <span style="color: #64748b;">➔</span>
               <input type="text" bind:value={newGlossaryKo} placeholder="한국어 번역 (예: 약초)" class="glossary-input" />
-              <button class="btn-small btn-add" on:click={addGlossaryItem}>추가</button>
+              <button class="btn-small btn-add" onclick={addGlossaryItem}>추가</button>
             </div>
             <div class="glossary-content scrollbar-hidden">
               {#if Object.keys(glossaryData).length === 0}
@@ -2591,7 +2597,7 @@ Original text: "${processingText}"`;
                         <td class="jp-val">{jp}</td>
                         <td class="ko-val">{ko}</td>
                         <td>
-                          <button class="btn-delete" on:click={() => removeGlossaryItem(jp)}>🗑️</button>
+                          <button class="btn-delete" onclick={() => removeGlossaryItem(jp)}>🗑️</button>
                         </td>
                       </tr>
                     {/each}
@@ -2631,7 +2637,7 @@ Original text: "${processingText}"`;
                   id="manual-translate-btn-normal"
                   class="btn" 
                   style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0;"
-                  on:click={() => runManualTranslation('normal')} 
+                  onclick={() => runManualTranslation('normal')} 
                   disabled={isManualTranslating || !manualSourceText.trim()}
                 >
                   {#if isManualTranslating && manualTranslateMode === 'normal'}
@@ -2644,7 +2650,7 @@ Original text: "${processingText}"`;
                   id="manual-translate-btn-detailed"
                   class="btn btn-detailed" 
                   style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0;"
-                  on:click={() => runManualTranslation('detailed')} 
+                  onclick={() => runManualTranslation('detailed')} 
                   disabled={isManualTranslating || !manualSourceText.trim()}
                 >
                   {#if isManualTranslating && manualTranslateMode === 'detailed'}
@@ -2657,7 +2663,7 @@ Original text: "${processingText}"`;
                   id="manual-translate-btn-reset"
                   class="btn" 
                   style="background-color: #475569; display: flex; align-items: center; justify-content: center; height: 36px; padding: 0;"
-                  on:click={() => { manualSourceText = ''; manualTranslatedText = ''; manualTranslateError = ''; manualTranslateTime = 0; }}
+                  onclick={() => { manualSourceText = ''; manualTranslatedText = ''; manualTranslateError = ''; manualTranslateTime = 0; }}
                   disabled={isManualTranslating}
                 >
                   초기화
@@ -2673,7 +2679,7 @@ Original text: "${processingText}"`;
                         id="manual-translate-copy-btn"
                         class="btn" 
                         style="background-color: #10b981; padding: 0 8px; font-size: 0.75rem; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: 500; border: none; cursor: pointer; border-radius: 4px;"
-                        on:click={() => {
+                        onclick={() => {
                           navigator.clipboard.writeText(manualTranslatedText);
                           alert("번역 결과가 클립보드에 복사되었습니다!");
                         }}
@@ -2716,7 +2722,7 @@ Original text: "${processingText}"`;
                   * Ollama API 통신 과정 및 실시간 응답 로그가 기록됩니다.
                 </span>
               </div>
-              <button class="btn-small btn-save" on:click={() => debugLogs = []}>로그 지우기</button>
+              <button class="btn-small btn-save" onclick={() => debugLogs = []}>로그 지우기</button>
             </div>
             <div class="debug-content">
               {#if debugLogs.length === 0}
@@ -2742,7 +2748,7 @@ Original text: "${processingText}"`;
               class="search-input"
             />
             {#if searchQuery}
-              <button class="clear-search-btn" on:click={() => searchQuery = ''}>✕</button>
+              <button class="clear-search-btn" onclick={() => searchQuery = ''}>✕</button>
             {/if}
           </div>
           
@@ -2764,7 +2770,7 @@ Original text: "${processingText}"`;
             <button 
               type="button" 
               class="btn-clear-results" 
-              on:click={clearSearchResultTranslations}
+              onclick={clearSearchResultTranslations}
               title="현재 검색/필터 결과의 모든 번역 내용을 지웁니다"
               disabled={isTranslating}
             >
@@ -2773,7 +2779,7 @@ Original text: "${processingText}"`;
           {/if}
         </div>
 
-        <div class="content-body scrollbar-hidden" bind:this={viewportEl} bind:clientHeight={viewportHeight} on:scroll={handleScroll}>
+        <div class="content-body scrollbar-hidden" bind:this={viewportEl} bind:clientHeight={viewportHeight} onscroll={handleScroll}>
           <div class="strings-list" style="position: relative; height: {totalHeight}px; min-height: 100%; display: block;">
             <div style="transform: translateY({topSpacerHeight}px); display: flex; flex-direction: column; gap: 0.5rem; width: 100%;">
               {#each visibleStrings as item (item.id)}
@@ -2805,19 +2811,19 @@ Original text: "${processingText}"`;
                           bind:value={item.translatedText} 
                           placeholder="번역된 내용이 여기에 표시됩니다..."
                           disabled={item.translatedText === "번역 중..."}
-                          on:blur={() => handleManualTranslationChange(item)}
+                          onblur={() => handleManualTranslationChange(item)}
                         ></textarea>
                         {#if item.validationError}
                           <div class="validation-error-indicator" style="right: {item.translationTime && item.translatedText !== '번역 중...' && item.translatedText !== '번역 실패' ? '115px' : '8px'};" title={item.validationError}>
                             ⚠️ {item.validationError}
                           </div>
                         {:else if item.translatedText === "번역 실패" && item.errorMsg}
-                          <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
+                          <button type="button" class="error-indicator" title="클릭하여 에러 메시지 복사" onclick={() => {
                             navigator.clipboard.writeText(item.errorMsg || '');
                             alert("에러 로그가 클립보드에 복사되었습니다!");
                           }}>
                             ⚠️ 에러 발생 (로그 복사)
-                          </div>
+                          </button>
                         {/if}
                         {#if item.translationTime && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
                           <div class="time-indicator">
@@ -2829,7 +2835,7 @@ Original text: "${processingText}"`;
                         <button 
                           class="btn-small btn-action-icon" 
                           title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "번역 (기본)"} 
-                          on:click={() => clickTranslateRow(item, 'normal')} 
+                          onclick={() => clickTranslateRow(item, 'normal')} 
                           disabled={isTranslating}
                         >
                           {#if item.translatedText === "번역 중..."}
@@ -2841,7 +2847,7 @@ Original text: "${processingText}"`;
                         <button 
                           class="btn-small btn-action-icon btn-detailed-translate" 
                           title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "자세히 번역 (고품질)"} 
-                          on:click={() => clickTranslateRow(item, 'detailed')} 
+                          onclick={() => clickTranslateRow(item, 'detailed')} 
                           disabled={isTranslating}
                         >
                           {#if item.translatedText === "번역 중..."}
@@ -2855,7 +2861,7 @@ Original text: "${processingText}"`;
                             class="btn-small btn-action-icon btn-global-replace" 
                             style="background-color: #6366f1;" 
                             title="폴더 내 동일 대사 일괄 변경" 
-                            on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} 
+                            onclick={() => applyFolderWideReplacement(item.text, item.translatedText)} 
                             disabled={isTranslating}
                           >
                             🌐
@@ -2864,7 +2870,7 @@ Original text: "${processingText}"`;
                             class="btn-small btn-action-icon btn-add-glossary" 
                             style="background-color: #0d9488;" 
                             title="용어 사전에 단어 등록" 
-                            on:click={() => addGlossaryDirect(item.text, item.translatedText)} 
+                            onclick={() => addGlossaryDirect(item.text, item.translatedText)} 
                             disabled={isTranslating}
                           >
                             📖
@@ -2898,19 +2904,19 @@ Original text: "${processingText}"`;
                         bind:value={item.translatedText} 
                         placeholder="번역된 내용이 여기에 표시됩니다..."
                         disabled={item.translatedText === "번역 중..."}
-                        on:blur={() => handleManualTranslationChange(item)}
+                        onblur={() => handleManualTranslationChange(item)}
                       ></textarea>
                       {#if item.validationError}
                         <div class="validation-error-indicator" style="right: {item.translationTime && item.translatedText !== '번역 중...' && item.translatedText !== '번역 실패' ? '115px' : '8px'};" title={item.validationError}>
                           ⚠️ {item.validationError}
                         </div>
                       {:else if item.translatedText === "번역 실패" && item.errorMsg}
-                        <div class="error-indicator" title="클릭하여 에러 메시지 복사" on:click={() => {
+                        <button type="button" class="error-indicator" title="클릭하여 에러 메시지 복사" onclick={() => {
                           navigator.clipboard.writeText(item.errorMsg || '');
                           alert("에러 로그가 클립보드에 복사되었습니다!");
                         }}>
                           ⚠️ 에러 발생 (로그 복사)
-                        </div>
+                        </button>
                       {/if}
                       {#if item.translationTime && item.translatedText !== "번역 중..." && item.translatedText !== "번역 실패"}
                         <div class="time-indicator">
@@ -2922,7 +2928,7 @@ Original text: "${processingText}"`;
                       <button 
                         class="btn-small btn-action-icon" 
                         title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "번역 (기본)"} 
-                        on:click={() => clickTranslateRow(item, 'normal')} 
+                        onclick={() => clickTranslateRow(item, 'normal')} 
                         disabled={isTranslating}
                       >
                         {#if item.translatedText === "번역 중..."}
@@ -2934,7 +2940,7 @@ Original text: "${processingText}"`;
                       <button 
                         class="btn-small btn-action-icon btn-detailed-translate" 
                         title={item.translatedText === "번역 중..." ? "번역 중 (클릭 시 취소)" : "자세히 번역 (고품질)"} 
-                        on:click={() => clickTranslateRow(item, 'detailed')} 
+                        onclick={() => clickTranslateRow(item, 'detailed')} 
                         disabled={isTranslating}
                       >
                         {#if item.translatedText === "번역 중..."}
@@ -2948,7 +2954,7 @@ Original text: "${processingText}"`;
                           class="btn-small btn-action-icon btn-global-replace" 
                           style="background-color: #6366f1;" 
                           title="폴더 내 동일 대사 일괄 변경" 
-                          on:click={() => applyFolderWideReplacement(item.text, item.translatedText)} 
+                          onclick={() => applyFolderWideReplacement(item.text, item.translatedText)} 
                           disabled={isTranslating}
                         >
                           🌐
@@ -2957,7 +2963,7 @@ Original text: "${processingText}"`;
                           class="btn-small btn-action-icon btn-add-glossary" 
                           style="background-color: #0d9488;" 
                           title="용어 사전에 단어 등록" 
-                          on:click={() => addGlossaryDirect(item.text, item.translatedText)} 
+                          onclick={() => addGlossaryDirect(item.text, item.translatedText)} 
                           disabled={isTranslating}
                         >
                           📖
@@ -3006,7 +3012,7 @@ Original text: "${processingText}"`;
           {:else}ℹ️{/if}
         </span>
         <span class="toast-message">{toast.message}</span>
-        <button class="toast-close-btn" on:click={() => removeToast(toast.id)}>✕</button>
+        <button class="toast-close-btn" onclick={() => removeToast(toast.id)}>✕</button>
       </div>
     {/each}
   </div>
@@ -3048,14 +3054,6 @@ Original text: "${processingText}"`;
     padding: 0.8rem 1.5rem;
     position: relative;
     z-index: 10;
-    
-    h1 {
-      font-size: 1.2rem;
-      font-weight: 600;
-      background: linear-gradient(to right, #60a5fa, #a78bfa);
-      -webkit-background-clip: text;
-      color: transparent;
-    }
 
     .header-actions {
       display: flex;
@@ -3154,13 +3152,25 @@ Original text: "${processingText}"`;
       list-style: none;
       padding: 0.5rem;
       
-      li {
+      .script-item-wrap {
+        padding: 0;
+        margin: 0;
+      }
+      
+      .script-item-btn {
+        width: 100%;
+        background: transparent;
+        border: none;
+        color: inherit;
+        font: inherit;
+        text-align: left;
         padding: 0.75rem 1rem;
         cursor: pointer;
         border-radius: 6px;
         transition: all 0.2s ease;
         display: flex;
         gap: 0.5rem;
+        align-items: center;
         
         .id {
           color: var(--text-secondary);
@@ -3183,6 +3193,7 @@ Original text: "${processingText}"`;
         &.active {
           background: rgba(59, 130, 246, 0.2);
           border-left: 3px solid var(--accent-color);
+          border-radius: 0 6px 6px 0;
         }
 
         &.disabled {
@@ -3711,9 +3722,6 @@ Original text: "${processingText}"`;
         color: #64748b;
       }
 
-      .action-column {
-        /* empty */
-      }
 
       .context-badge-label {
         font-size: 0.65rem;
@@ -3765,29 +3773,6 @@ Original text: "${processingText}"`;
     }
   }
 
-  .dropdown-menu {
-    animation: fadeIn 0.12s ease-out;
-
-    .menu-item {
-      background: transparent;
-      border: none;
-      color: #f1f5f9;
-      padding: 0.55rem 1rem;
-      text-align: left;
-      cursor: pointer;
-      border-radius: 4px;
-      transition: background 0.2s;
-      font-size: 0.9rem;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      width: 100%;
-
-      &:hover {
-        background: rgba(255, 255, 255, 0.08);
-      }
-    }
-  }
 
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(-5px); }

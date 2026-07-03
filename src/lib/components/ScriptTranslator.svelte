@@ -494,6 +494,23 @@
     }
   }
 
+  /** Ollama 서버 연결 확인 및 모델 목록 가져오기 */
+  async function initOllama() {
+    ollamaStatus = 'checking';
+    try {
+      const models = await invoke<{ name: string }[]>("get_ollama_models");
+      availableModels = models;
+      if (availableModels.length > 0 && !localStorage.getItem('ollamaModelName_script') && !localStorage.getItem('ollamaModelName')) {
+        ollamaModelName = availableModels[0].name;
+        localStorage.setItem('ollamaModelName_script', ollamaModelName);
+      }
+      ollamaStatus = 'online';
+    } catch (e) {
+      addLog("Ollama 서버 연결 실패: 로컬 서버가 켜져 있는지 확인하세요.");
+      ollamaStatus = 'offline';
+    }
+  }
+
   /** 모델 드롭다운 변경 시 호출 */
   async function onModelChange() {
     localStorage.setItem('selectedModelId_script', selectedModelId);
@@ -519,29 +536,16 @@
     llamaServerPath = localStorage.getItem('llamaServerPath') || '';
     const savedModel = localStorage.getItem('selectedModelId_script') || localStorage.getItem('selectedModelId');
     if (savedModel) selectedModelId = savedModel;
+    
+    // Svelte select가 바인딩을 리셋하지 않도록, 저장된 모델이 있으면 availableModels에 미리 추가해둠
+    if (selectedModelId && selectedModelId.startsWith('ollama:')) {
+      const savedModelName = selectedModelId.slice(7);
+      availableModels = [{ name: savedModelName }];
+    }
+    
     addLog("앱 초기화 완료. 모델명: " + ollamaModelName);
 
 
-
-    const initOllama = async () => {
-      try {
-        const res = await fetch("http://127.0.0.1:11434/api/tags");
-        if (res.ok) {
-          const data = await res.json();
-          availableModels = data.models || [];
-          if (availableModels.length > 0 && !localStorage.getItem('ollamaModelName_script') && !localStorage.getItem('ollamaModelName')) {
-            ollamaModelName = availableModels[0].name;
-            localStorage.setItem('ollamaModelName_script', ollamaModelName);
-          }
-          ollamaStatus = 'online';
-        } else {
-          ollamaStatus = 'offline';
-        }
-      } catch (e) {
-        addLog("Ollama 서버 연결 실패: 로컬 서버가 켜져 있는지 확인하세요.");
-        ollamaStatus = 'offline';
-      }
-    };
 
     initOllama();
     updateLlamaAvailability();
@@ -2589,8 +2593,12 @@ ${finalProcessingText}`;
         <!-- Ollama 신호등 -->
         <div
           class="status-dot"
-          title={ollamaStatus === 'online' ? 'Ollama 서버 정상 연결됨' : (ollamaStatus === 'checking' ? 'Ollama 서버 확인 중...' : 'Ollama 서버 연결 실패')}
-          style="width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background-color: {ollamaStatus === 'online' ? '#10b981' : (ollamaStatus === 'checking' ? '#f59e0b' : '#ef4444')}; box-shadow: 0 0 5px {ollamaStatus === 'online' ? 'rgba(16,185,129,0.5)' : (ollamaStatus === 'checking' ? 'rgba(245,158,11,0.5)' : 'rgba(239,68,68,0.5)')}; margin-left: 0.2rem;"
+          title={ollamaStatus === 'online' ? 'Ollama 서버 정상 연결됨 (클릭하여 재연결 시도)' : (ollamaStatus === 'checking' ? 'Ollama 서버 확인 중...' : 'Ollama 서버 연결 실패 (클릭하여 재연결 시도)')}
+          style="width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; cursor: pointer; background-color: {ollamaStatus === 'online' ? '#10b981' : (ollamaStatus === 'checking' ? '#f59e0b' : '#ef4444')}; box-shadow: 0 0 5px {ollamaStatus === 'online' ? 'rgba(16,185,129,0.5)' : (ollamaStatus === 'checking' ? 'rgba(245,158,11,0.5)' : 'rgba(239,68,68,0.5)')}; margin-left: 0.2rem;"
+          onclick={initOllama}
+          role="button"
+          tabindex="0"
+          onkeydown={(e) => e.key === 'Enter' && initOllama()}
         ></div>
       {/if}
     </div>

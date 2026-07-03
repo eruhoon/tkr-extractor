@@ -860,6 +860,32 @@ fn check_llama_server_availability(custom_path: Option<String>) -> bool {
     false
 }
 
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+pub struct OllamaModel {
+    pub name: String,
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub struct OllamaTagsResponse {
+    pub models: Option<Vec<OllamaModel>>,
+}
+
+#[tauri::command]
+async fn get_ollama_models() -> Result<Vec<OllamaModel>, String> {
+    let client = reqwest::Client::new();
+    let res = client.get("http://127.0.0.1:11434/api/tags")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    if !res.status().is_success() {
+        return Err(format!("Ollama returned status: {}", res.status()));
+    }
+    
+    let body = res.json::<OllamaTagsResponse>().await.map_err(|e| e.to_string())?;
+    Ok(body.models.unwrap_or_default())
+}
+
 #[tauri::command]
 fn delete_model(app: tauri::AppHandle, model_id: String) -> Result<(), String> {
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -902,7 +928,8 @@ pub fn run() {
             start_llama_server,
             stop_llama_server,
             delete_model,
-            check_llama_server_availability
+            check_llama_server_availability,
+            get_ollama_models
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

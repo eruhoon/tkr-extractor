@@ -26,6 +26,7 @@
   let { isDragging = false } = $props();
 
   let selectedFolder = $state('');
+  let translationMap = $state<Record<string, string>>({});
   let images = $state<ImageEntry[]>([]);
   let selectedImage = $state<ImageEntry | null>(null);
   let isProcessing = $state(false);
@@ -39,6 +40,11 @@
   let totalImagesProcessed = $state(0);
   let showDebugPanel = $state(false);
   let debugLogs = $state<string[]>([]);
+  let geminiApiKey = $state('');
+  function saveGeminiApiKey() {
+    localStorage.setItem('geminiApiKey', geminiApiKey);
+    addLog("Gemini API Key 저장됨");
+  }
 
   function addLog(msg: string) {
     const time = new Date().toLocaleTimeString();
@@ -167,12 +173,12 @@
   }
 
   async function handleModelChange() {
-    localStorage.setItem('selectedModelId', selectedModelId);
+    localStorage.setItem('selectedModelId_image', selectedModelId);
     addLog("모델 선택 변경됨: " + selectedModelId);
     
     if (selectedModelId.startsWith('ollama:')) {
       ollamaModelName = selectedModelId.replace('ollama:', '');
-      localStorage.setItem('ollamaModelName', ollamaModelName);
+      localStorage.setItem('ollamaModelName_image', ollamaModelName);
       // llama 서버가 떠 있으면 종료
       if (llamaServerRunning) {
         try { await invoke('stop_llama_server'); } catch {}
@@ -183,13 +189,22 @@
     } else if (selectedModelId.startsWith('llamacpp:')) {
       // 비동기로 서버 준비 (선제적 시작)
       startLlamaIfNeeded(selectedModelId).catch(e => addLog(`[llama.cpp] 자동 시작 실패: ${e}`));
+    } else if (selectedModelId.startsWith('gemini:')) {
+      // llama 서버가 떠 있으면 종료
+      if (llamaServerRunning) {
+        try { await invoke('stop_llama_server'); } catch {}
+        llamaServerRunning = false;
+        llamaServerStatus = 'idle';
+        llamaCurrentModelId = '';
+      }
     }
   }
 
   onMount(() => {
-    ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
-    selectedModelId = localStorage.getItem('selectedModelId') || 'llamacpp:gemma-4-E4B-it';
+    ollamaModelName = localStorage.getItem('ollamaModelName_image') || localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
+    selectedModelId = localStorage.getItem('selectedModelId_image') || localStorage.getItem('selectedModelId') || 'gemini:gemini-2.5-flash';
     llamaServerPath = localStorage.getItem('llamaServerPath') || '';
+    geminiApiKey = localStorage.getItem('geminiApiKey') || '';
     totalImagesProcessed = parseInt(localStorage.getItem('totalImagesProcessed') || '0', 10);
     addLog("앱 초기화 완료. 현재 모델: " + selectedModelId);
     updateAvailability();
@@ -263,7 +278,7 @@
   });
 
   function saveModelName() {
-    localStorage.setItem('ollamaModelName', ollamaModelName);
+    localStorage.setItem('ollamaModelName_image', ollamaModelName);
     alert('로컬 모델명이 저장되었습니다.');
     addLog("모델명 변경됨: " + ollamaModelName);
   }
@@ -323,20 +338,67 @@
     await loadImages(path);
   }
 
-  async function loadImages(folder: string) {
+  async function loadTranslationMap(folder: string) {
+    if (!folder) {
+      translationMap = {};
+      return;
+    }
+    const mapPath = folder + '/translation_map.json';
     try {
-      const paths: string[] = await invoke('get_images_in_folder', { folderPath: folder });
-      images = paths.map(path => {
-        const name = path.split('\\').pop()?.split('/').pop() || path;
-        return {
-          path,
-          name,
-          regions: [],
-          status: 'pending'
+      const exists: boolean = await invoke('check_file_exists', { path: mapPath });
+      if (exists) {
+        const content: string = await invoke('read_staged_json', { path: mapPath });
+        translationMap = JSON.parse(content) || {};
+        addLog(`로컬 치환 사전 로드 완료: ${Object.keys(translationMap).length}개 단어`);
+      } else {
+        const defaultMap = {
+          "未所持": "미소지",
+          "設定": "설정",
+          "決定": "결정",
+          "戻る": "돌아가기",
+          "確認": "확인"
         };
-      });
+        const content = JSON.stringify(defaultMap, null, 2);
+        await invoke('save_staged_json', { path: mapPath, content });
+        translationMap = defaultMap;
+        addLog("로컬 치환 사전이 없어 기본 사전을 자동 생성했습니다.");
+      }
+    } catch (e) {
+      console.error("Failed to load translation map", e);
+      addLog("로컬 치환 사전 로드 실패: " + String(e));
+      translationMap = {};
+    }
+  }
+
+  async function loadImages(folder: string) {
+    let folderPath = folder;
+    try {
+      const isDir: boolean = await invoke('is_directory', { path: folder });
+      if (!isDir) {
+        const lastSlash = Math.max(folder.lastIndexOf('/'), folder.lastIndexOf('\\'));
+        folderPath = lastSlash !== -1 ? folder.substring(0, lastSlash) : folder;
+      }
+    } catch (e) {}
+
+    try {
+      const paths: string[] = await invoke('get_images_in_folder', { folderPath: folderPath });
+      images = paths
+        .filter(path => {
+          const lower = path.toLowerCase();
+          return !lower.includes('-translated') && !lower.includes('_translated');
+        })
+        .map(path => {
+          const name = path.split('\\').pop()?.split('/').pop() || path;
+          return {
+            path,
+            name,
+            regions: [],
+            status: 'pending'
+          };
+        });
       selectedImage = null;
-      addLog(`${paths.length}개의 이미지를 불러왔습니다.`);
+      addLog(`${images.length}개의 이미지를 불러왔습니다.`);
+      await loadTranslationMap(folderPath);
     } catch (e) {
       alert("Failed to load images: " + e);
       addLog("이미지 로드 실패: " + String(e));
@@ -351,6 +413,44 @@
         binary += String.fromCharCode(bytes[i]);
     }
     return window.btoa(binary);
+  }
+
+  async function upscaleBase64IfNeeded(base64Data: string): Promise<string> {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        if (img.width >= 1024 || img.height >= 1024) {
+          resolve(base64Data);
+          return;
+        }
+
+        const minDim = Math.min(img.width, img.height);
+        if (minDim <= 0) {
+          resolve(base64Data);
+          return;
+        }
+
+        const scale = Math.max(2, Math.min(8, Math.ceil(1024 / minDim)));
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(base64Data);
+          return;
+        }
+
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        
+        const dataUrl = canvas.toDataURL('image/png');
+        resolve(dataUrl.split(',')[1]);
+      };
+      img.onerror = () => {
+        resolve(base64Data);
+      };
+      img.src = 'data:image/png;base64,' + base64Data;
+    });
   }
 
   async function processImageOllama(img: ImageEntry) {
@@ -368,13 +468,18 @@
       const bytes: number[] = await invoke('read_image_file', { path: img.path });
       const base64Data = bufferToBase64(bytes);
 
-      const prompt = `Task: Translate Japanese game UI text to Korean.
-1. Read ALL Japanese text in the image.
+      addLog(`[${img.name}] OCR 인식률 개선을 위한 이미지 전처리 중...`);
+      const vlmBase64 = await upscaleBase64IfNeeded(base64Data);
+
+      const prompt = `Context Image Filename: ${img.name}
+
+Task: Translate Japanese game UI text in the image to Korean.
+1. Read ALL Japanese text visually present in the image.
 2. Translate the Japanese text into fluent Korean. DO NOT copy the Japanese text. You MUST translate it.
-3. Find the bounding box coordinates [ymin, xmin, ymax, xmax] normalized to 0-1000 scale.
+3. Find the bounding box coordinates [ymin, xmin, ymax, xmax] of the visible text normalized to 0-1000 scale.
 4. Return ONLY a valid JSON array.
 
-Example output:
+Example output format:
 [
   {
     "ja_text": "未所持",
@@ -386,7 +491,9 @@ Example output:
 CRITICAL: "ko_text" MUST be in Korean (한국어). Do not leave it in Japanese.
 Output ONLY the JSON array without any markdown or conversational text.`;
 
-      const modelLabel = selectedModelId.startsWith('llamacpp:') ? selectedModelId : `Ollama(${ollamaModelName})`;
+      const modelLabel = selectedModelId.startsWith('llamacpp:') 
+        ? selectedModelId 
+        : (selectedModelId.startsWith('gemini:') ? `Gemini(${selectedModelId.replace('gemini:', '')})` : `Ollama(${ollamaModelName})`);
       addLog(`[${img.name}] 2/3 AI(${modelLabel})로 번역 요청...`);
       const startTime = performance.now();
 
@@ -403,12 +510,65 @@ Output ONLY the JSON array without any markdown or conversational text.`;
             prompt: prompt,
             image_data: [
               {
-                data: base64Data,
+                data: vlmBase64,
                 id: 1
               }
             ],
             n_predict: 1024,
             stream: false
+          })
+        });
+      } else if (selectedModelId.startsWith('gemini:')) {
+        const modelName = selectedModelId.replace('gemini:', '');
+        const apiKey = geminiApiKey || localStorage.getItem('geminiApiKey') || '';
+        if (!apiKey) {
+          throw new Error("Gemini API Key가 설정되지 않았습니다. 모델 드롭다운 우측 입력창에 API Key를 등록해 주세요.");
+        }
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: prompt },
+                  {
+                    inlineData: {
+                      mimeType: "image/png",
+                      data: vlmBase64
+                    }
+                  }
+                ]
+              }
+            ],
+            generationConfig: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    ja_text: {
+                      type: "STRING",
+                      description: "Original Japanese text extracted from the image"
+                    },
+                    ko_text: {
+                      type: "STRING",
+                      description: "Korean translation of the Japanese text"
+                    },
+                    box_2d: {
+                      type: "ARRAY",
+                      description: "Bounding box coordinates [ymin, xmin, ymax, xmax] strictly enclosing the original Japanese text, normalized to 0-1000",
+                      items: {
+                        type: "INTEGER"
+                      }
+                    }
+                  },
+                  required: ["ja_text", "ko_text", "box_2d"]
+                }
+              },
+              temperature: 0.1
+            }
           })
         });
       } else {
@@ -419,7 +579,7 @@ Output ONLY the JSON array without any markdown or conversational text.`;
             model: ollamaModelName,
             system: "You are an expert OCR and Japanese to Korean translator. Extract text and translate it into fluent Korean. Output ONLY valid JSON array without markdown blocks.",
             prompt: prompt,
-            images: [base64Data],
+            images: [vlmBase64],
             options: {
               num_ctx: 4096,
               num_predict: 1024,
@@ -437,44 +597,99 @@ Output ONLY the JSON array without any markdown or conversational text.`;
 
       const result = await response.json();
       const endTime = performance.now();
-      const responseText = selectedModelId.startsWith('llamacpp:')
-        ? (result.content || "")
-        : (result.response || "");
+      let responseText = "";
+      if (selectedModelId.startsWith('gemini:')) {
+        responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      } else {
+        responseText = selectedModelId.startsWith('llamacpp:')
+          ? (result.content || "")
+          : (result.response || "");
+      }
 
       addLog(`[${img.name}] 응답 수신 완료 (${((endTime-startTime)/1000).toFixed(1)}초). 원시 응답 텍스트:\n${responseText}`);
       
       let parsedRegions: OcrTextRegion[] = [];
       try {
-        const jsonMatch = responseText.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
-        const cleanedText = jsonMatch ? jsonMatch[0] : responseText;
-        
-        let jsonParsed = JSON.parse(cleanedText);
+        let jsonParsed: any = null;
+        try {
+          const jsonMatch = responseText.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+          const cleanedText = jsonMatch ? jsonMatch[0] : responseText;
+          jsonParsed = JSON.parse(cleanedText);
+        } catch (initialErr) {
+          console.warn("Initial JSON parse failed, attempting fallback extraction.", initialErr);
+          let extractedObjects: any[] = [];
+          let depth = 0;
+          let start = -1;
+          let inString = false;
+          let escape = false;
+
+          for (let i = 0; i < responseText.length; i++) {
+            const char = responseText[i];
+            if (escape) { escape = false; continue; }
+            if (char === '\\') { escape = true; continue; }
+            if (char === '"') { inString = !inString; continue; }
+            
+            if (!inString) {
+              if (char === '{') {
+                if (depth === 0) start = i;
+                depth++;
+              } else if (char === '}') {
+                depth--;
+                if (depth === 0 && start !== -1) {
+                  try {
+                    const obj = JSON.parse(responseText.substring(start, i + 1));
+                    extractedObjects.push(obj);
+                  } catch (e) {}
+                  start = -1;
+                } else if (depth < 0) {
+                  depth = 0;
+                }
+              }
+            }
+          }
+          if (extractedObjects.length > 0) {
+            jsonParsed = extractedObjects;
+          } else {
+            throw initialErr;
+          }
+        }
         
         if (!Array.isArray(jsonParsed) && typeof jsonParsed === 'object' && jsonParsed !== null) {
           jsonParsed = [jsonParsed];
         }
         
         if (Array.isArray(jsonParsed)) {
-            parsedRegions = jsonParsed.map((item: any) => {
-               let [ymin, xmin, ymax, xmax] = item.box_2d || [0, 0, 100, 100];
-               
-               ymin = Number(ymin); xmin = Number(xmin);
-               ymax = Number(ymax); xmax = Number(xmax);
+            parsedRegions = jsonParsed
+              .filter((item: any) => item && Array.isArray(item.box_2d) && item.box_2d.length === 4)
+              .map((item: any) => {
+                 let [ymin, xmin, ymax, xmax] = item.box_2d;
+                 
+                 ymin = Number(ymin); xmin = Number(xmin);
+                 ymax = Number(ymax); xmax = Number(xmax);
 
-               return {
-                 ja_text: item.ja_text || "",
-                 ko_text: item.ko_text || "",
-                 x: (xmin / 1000) * 100,
-                 y: (ymin / 1000) * 100,
-                 w: ((xmax - xmin) / 1000) * 100,
-                 h: ((ymax - ymin) / 1000) * 100
-               };
-            });
-            addLog(`[${img.name}] JSON 파싱 성공! ${parsedRegions.length}개 텍스트 찾음.`);
-        }
-        
-        if (parsedRegions.length === 0) {
-           throw new Error("텍스트를 찾지 못했거나 모델이 빈 배열을 반환했습니다.\n\n[모델 원시 응답]\n" + responseText);
+                 const jaText = item.ja_text || "";
+                 let koText = item.ko_text || "";
+
+                 // 로컬 치환 사전에 존재하는 원문인 경우 번역문을 덮어씌움
+                 for (const key of Object.keys(translationMap)) {
+                   if (jaText.includes(key)) {
+                     koText = translationMap[key];
+                     addLog(`[치환 사전 적용] "${jaText}" ➔ "${koText}" (키워드: "${key}")`);
+                     break;
+                   }
+                 }
+
+                 return {
+                   ja_text: jaText,
+                   ko_text: koText,
+                   x: (xmin / 1000) * 100,
+                   y: (ymin / 1000) * 100,
+                   w: ((xmax - xmin) / 1000) * 100,
+                   h: ((ymax - ymin) / 1000) * 100
+                 };
+              });
+            addLog(`[${img.name}] JSON 파싱 성공! (복구 포함) ${parsedRegions.length}개 텍스트 찾음.`);
+            console.log("[Parsed Regions]", parsedRegions);
         }
       } catch(parseErr) {
         console.error("JSON parsing error", responseText);
@@ -484,25 +699,47 @@ Output ONLY the JSON array without any markdown or conversational text.`;
 
       img.regions = parsedRegions;
 
-      addLog(`[${img.name}] 3/3 번역 결과를 물리 이미지로 합성 및 저장하는 중...`);
       const dotIndex = img.path.lastIndexOf('.');
       const outputExt = dotIndex > -1 ? img.path.substring(dotIndex) : '.png';
       const outputBase = dotIndex > -1 ? img.path.substring(0, dotIndex) : img.path;
       const outputPath = `${outputBase}-translated${outputExt}`;
 
-      await invoke('draw_and_save_image', {
-        originalPath: img.path,
-        outputPath: outputPath,
-        regions: parsedRegions
-      });
+      if (parsedRegions.length === 0) {
+        addLog(`[${img.name}] 감지된 텍스트가 없어 원본 이미지를 그대로 복사합니다.`);
+        await invoke('copy_file', { src: img.path, dest: outputPath });
+        img.translatedPath = outputPath;
+        delete imageCache[outputPath];
+        img.status = 'done';
+        totalImagesProcessed++;
+        localStorage.setItem('totalImagesProcessed', totalImagesProcessed.toString());
+      } else {
+        addLog(`[${img.name}] 3/3 번역 결과를 물리 이미지로 합성 및 저장하는 중...`);
+        await invoke('draw_and_save_image', {
+          originalPath: img.path,
+          outputPath: outputPath,
+          regions: parsedRegions
+        });
 
-      img.translatedPath = outputPath;
-      delete imageCache[outputPath];
+        img.translatedPath = outputPath;
+        delete imageCache[outputPath];
+        img.status = 'done';
+        totalImagesProcessed++;
+        localStorage.setItem('totalImagesProcessed', totalImagesProcessed.toString());
+        addLog(`[${img.name}] 완료! 번역 이미지 저장됨: ${outputPath}`);
+      }
 
-      img.status = 'done';
-      totalImagesProcessed++;
-      localStorage.setItem('totalImagesProcessed', totalImagesProcessed.toString());
-      addLog(`[${img.name}] 완료! 번역 이미지 저장됨: ${outputPath}`);
+      if (selectedFolder) {
+        invoke('save_staged_json', {
+          path: selectedFolder + '/debug_image_log.json',
+          content: JSON.stringify({
+            imageName: img.name,
+            responseText: responseText,
+            parsedRegions: parsedRegions,
+            debugLogs: debugLogs
+          }, null, 2)
+        }).catch(e => console.error(e));
+      }
+      
       
     } catch (e: any) {
       img.status = 'error';
@@ -608,6 +845,11 @@ Output ONLY the JSON array without any markdown or conversational text.`;
     <div class="api-section" style="display: flex; align-items: center; gap: 0.5rem;">
       <label for="model-selector-image" style="font-weight: 500; color: var(--text-secondary); white-space: nowrap; margin: 0;">모델:</label>
       <select id="model-selector-image" bind:value={selectedModelId} onchange={handleModelChange} class="api-input" style="cursor: pointer;" disabled={isProcessing}>
+        <optgroup label="Cloud API (추천)">
+          <option value="gemini:gemini-2.5-flash">Gemini 2.5 Flash (초고화질 OCR)</option>
+          <option value="gemini:gemini-1.5-flash">Gemini 1.5 Flash (초고화질 OCR)</option>
+          <option value="gemini:gemini-2.5-pro">Gemini 2.5 Pro (전문가급 OCR)</option>
+        </optgroup>
         <optgroup label="llama.cpp">
           {#each llamacppPresets as preset}
             <option value={preset.id}>{preset.name}</option>
@@ -621,6 +863,18 @@ Output ONLY the JSON array without any markdown or conversational text.`;
           </optgroup>
         {/if}
       </select>
+
+      {#if selectedModelId.startsWith('gemini:')}
+        <input
+          type="password"
+          placeholder="Gemini API Key 입력"
+          bind:value={geminiApiKey}
+          onchange={saveGeminiApiKey}
+          class="api-input"
+          style="width: 160px; font-size: 0.8rem; padding: 0.55rem 0.75rem;"
+          disabled={isProcessing}
+        />
+      {/if}
 
       <!-- 신호등 상태 -->
       {#if selectedModelId.startsWith('llamacpp:')}

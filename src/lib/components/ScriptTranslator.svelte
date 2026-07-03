@@ -338,7 +338,7 @@
   }
 
   function saveModelName() {
-    localStorage.setItem('ollamaModelName', ollamaModelName);
+    localStorage.setItem('ollamaModelName_script', ollamaModelName);
     addLog("모델명 변경됨: " + ollamaModelName);
   }
 
@@ -440,7 +440,7 @@
 
   /** 모델 드롭다운 변경 시 호출 */
   async function onModelChange() {
-    localStorage.setItem('selectedModelId', selectedModelId);
+    localStorage.setItem('selectedModelId_script', selectedModelId);
     if (selectedModelId.startsWith('ollama:')) {
       ollamaModelName = selectedModelId.slice(7);
       saveModelName();
@@ -459,9 +459,9 @@
 
 
   onMount(() => {
-    ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
+    ollamaModelName = localStorage.getItem('ollamaModelName_script') || localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
     llamaServerPath = localStorage.getItem('llamaServerPath') || '';
-    const savedModel = localStorage.getItem('selectedModelId');
+    const savedModel = localStorage.getItem('selectedModelId_script') || localStorage.getItem('selectedModelId');
     if (savedModel) selectedModelId = savedModel;
     addLog("앱 초기화 완료. 모델명: " + ollamaModelName);
 
@@ -473,9 +473,9 @@
         if (res.ok) {
           const data = await res.json();
           availableModels = data.models || [];
-          if (availableModels.length > 0 && !localStorage.getItem('ollamaModelName')) {
+          if (availableModels.length > 0 && !localStorage.getItem('ollamaModelName_script') && !localStorage.getItem('ollamaModelName')) {
             ollamaModelName = availableModels[0].name;
-            localStorage.setItem('ollamaModelName', ollamaModelName);
+            localStorage.setItem('ollamaModelName_script', ollamaModelName);
           }
           ollamaStatus = 'online';
         } else {

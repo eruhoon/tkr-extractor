@@ -14,7 +14,7 @@ Rules:
 
 Original text: "${sentence}"`;
 
-        const ollamaModelName = localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
+        const ollamaModelName = localStorage.getItem('ollamaModelName_script') || localStorage.getItem('ollamaModelName') || 'gemma4:e4b';
         const response = await fetch("http://127.0.0.1:11434/api/generate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },

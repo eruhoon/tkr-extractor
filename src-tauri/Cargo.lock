@@ -4833,27 +4833,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tauri-app"
-version = "0.1.0"
-dependencies = [
- "ab_glyph",
- "alox-48",
- "flate2",
- "image",
- "imageproc",
- "reqwest 0.13.3",
- "rpgmad-lib",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-http",
- "tauri-plugin-opener",
- "walkdir",
-]
-
-[[package]]
 name = "tauri-build"
 version = "2.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5251,6 +5230,27 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "tkr-extractor"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "alox-48",
+ "flate2",
+ "image",
+ "imageproc",
+ "reqwest 0.13.3",
+ "rpgmad-lib",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-http",
+ "tauri-plugin-opener",
+ "walkdir",
+]
 
 [[package]]
 name = "tokio"

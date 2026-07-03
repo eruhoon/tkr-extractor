@@ -148,6 +148,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct OcrRegion {
+    ja_text: String,
     ko_text: String,
     x: f32, // 0~100 %
     y: f32, // 0~100 %
@@ -191,43 +192,261 @@ fn draw_and_save_image(original_path: String, output_path: String, regions: Vec<
     })?;
     let font = FontRef::try_from_slice(&font_bytes).map_err(|e| e.to_string())?;
 
+    use ab_glyph::{Font, ScaleFont};
+
     for r in regions {
         // 여유(패딩)를 약간 주어 원본 일본어를 더 잘 가리도록 함
         let pad_w = (width as f32 * 0.02) as i32;
         let pad_h = (height as f32 * 0.02) as i32;
-        let px = ((r.x / 100.0 * width as f32) as i32 - pad_w).max(0);
-        let py = ((r.y / 100.0 * height as f32) as i32 - pad_h).max(0);
-        let pw = ((r.w / 100.0 * width as f32) as u32 + (pad_w * 2) as u32).max(1);
-        let ph = ((r.h / 100.0 * height as f32) as u32 + (pad_h * 2) as u32).max(1);
+        let mut px = ((r.x / 100.0 * width as f32) as i32 - pad_w).max(0);
+        let mut py = ((r.y / 100.0 * height as f32) as i32 - pad_h).max(0);
+        let mut pw = ((r.w / 100.0 * width as f32) as u32 + (pad_w * 2) as u32).max(1);
+        let mut ph = ((r.h / 100.0 * height as f32) as u32 + (pad_h * 2) as u32).max(1);
 
-        // 검정색 배경 박스 (알파 200)
-        let rect = Rect::at(px, py).of_size(pw, ph);
-        draw_filled_rect_mut(&mut img, rect, Rgba([0, 0, 0, 200]));
-
-        // 글자 크기를 박스 높이의 70%로 설정하고, 너비가 너무 작으면 거기에 맞춤
-        let mut scale = (ph as f32 * 0.7).max(16.0);
-        let text_len = r.ko_text.chars().count().max(1) as f32;
-        // 박스 너비보다 글씨가 삐져나가지 않도록 스케일 조정
-        if scale * text_len > pw as f32 {
-            scale = (pw as f32 / text_len).max(12.0);
+        // 이미지 경계 내로 제한
+        if px as u32 + pw > width {
+            pw = width - px as u32;
         }
-        let ab_scale = ab_glyph::PxScale::from(scale);
-        
-        let tx = px + (pad_w / 2).max(2);
-        let ty = py + (pad_h / 2).max(2);
+        if py as u32 + ph > height {
+            ph = height - py as u32;
+        }
 
-        // 검은색 외곽선(Stroke)을 그리기 위해 상하좌우대각선 8방향으로 1~2px 밀어서 렌더링
-        let outline_color = Rgba([0, 0, 0, 255]);
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                if dx != 0 || dy != 0 {
-                    draw_text_mut(&mut img, outline_color, tx + dx, ty + dy, ab_scale, &font, &r.ko_text);
+        // 크롭된 UI 이미지인 경우(세로 높이가 작은 경우), 텍스트가 가로로 중앙 정렬되어 있다고 가정
+        // (공간 인식이 부족한 로컬 VLM이 치우친 위치를 예측하는 오작동을 보정)
+        if height < 150 {
+            let center_x = width as f32 / 2.0;
+            px = (center_x - pw as f32 / 2.0).round() as i32;
+        }
+
+        // 이미지 높이가 매우 작은 경우(예: 24px, 32px 등 크롭된 에셋)
+        // 원본 폰트 크기가 지나치게 작아지지 않도록 이미지 높이에 비례한 최소 폰트 크기를 설정
+        let min_scale = if height < 100 {
+            (height as f32 * 0.65).max(14.0)
+        } else {
+            14.0
+        };
+
+        // 글자 크기를 박스 높이의 85%부터 시작하여 박스 크기에 맞춰 동적 감축 (최소 min_scale)
+        let mut scale = (ph as f32 * 0.85).max(min_scale);
+        let max_allowed_width = (pw as f32 * 0.95).max(1.0);
+        let max_allowed_height = (ph as f32 * 0.95).max(1.0);
+
+        loop {
+            let ab_scale = ab_glyph::PxScale::from(scale);
+            let scaled_font = font.as_scaled(ab_scale);
+            
+            let mut text_width = 0.0;
+            let mut last_glyph_id = None;
+            for c in r.ko_text.chars() {
+                let glyph_id = font.glyph_id(c);
+                text_width += scaled_font.h_advance(glyph_id);
+                if let Some(last) = last_glyph_id {
+                    text_width += scaled_font.kern(last, glyph_id);
+                }
+                last_glyph_id = Some(glyph_id);
+            }
+
+            let text_height = scaled_font.ascent() - scaled_font.descent();
+
+            if (text_width <= max_allowed_width && text_height <= max_allowed_height) || scale <= min_scale {
+                break;
+            }
+            scale -= 1.0;
+        }
+
+        // 최종 결정된 스케일 기반 렌더링 파라미터 및 필요 공간 계산
+        let ab_scale = ab_glyph::PxScale::from(scale);
+        let scaled_font = font.as_scaled(ab_scale);
+
+        // 원본 일본어 문구(ja_text)와 한국어 번역 문구(ko_text) 중 더 넓은 가로 폭을 차지하는 것을 기준으로 덮개 크기 연산
+        let text_to_measure = if r.ja_text.chars().count() > r.ko_text.chars().count() {
+            &r.ja_text
+        } else {
+            &r.ko_text
+        };
+
+        let mut final_text_width = 0.0;
+        let mut last_glyph_id = None;
+        for c in text_to_measure.chars() {
+            let glyph_id = font.glyph_id(c);
+            final_text_width += scaled_font.h_advance(glyph_id);
+            if let Some(last) = last_glyph_id {
+                final_text_width += scaled_font.kern(last, glyph_id);
+            }
+            last_glyph_id = Some(glyph_id);
+        }
+
+        let final_text_height = scaled_font.ascent() - scaled_font.descent();
+
+        // 텍스트가 바운딩 박스보다 크거나 확실하게 지우기 위해, 여유 패딩 마진 추가
+        let extra_padding_w = (scale * 0.45).max(10.0);
+        let required_pw = ((final_text_width + extra_padding_w) / 0.95).ceil() as u32;
+        let required_ph = (final_text_height / 0.95).ceil() as u32;
+
+        if pw < required_pw {
+            let diff = required_pw - pw;
+            px = (px - (diff as i32 / 2)).max(0);
+            pw = required_pw;
+            if px as u32 + pw > width {
+                pw = width - px as u32;
+            }
+        }
+
+        if ph < required_ph {
+            let diff = required_ph - ph;
+            py = (py - (diff as i32 / 2)).max(0);
+            ph = required_ph;
+            if py as u32 + ph > height {
+                ph = height - py as u32;
+            }
+        }
+
+        // 주변부 배경색 감지 (확장 완료된 바운딩 박스 외곽 픽셀 샘플링 및 평균색 계산)
+        let mut r_sum: u32 = 0;
+        let mut g_sum: u32 = 0;
+        let mut b_sum: u32 = 0;
+        let mut a_sum: u32 = 0;
+        let mut count: u32 = 0;
+
+        // 상하 외곽 경계 (2픽셀 바깥)
+        let border_y_top = (py - 2).max(0) as u32;
+        let border_y_bottom = (py + ph as i32 + 1).min(height as i32 - 1) as u32;
+        for x in px..(px + pw as i32) {
+            if x >= 0 && x < width as i32 {
+                let p_top = img.get_pixel(x as u32, border_y_top);
+                let p_bottom = img.get_pixel(x as u32, border_y_bottom);
+                r_sum += p_top[0] as u32 + p_bottom[0] as u32;
+                g_sum += p_top[1] as u32 + p_bottom[1] as u32;
+                b_sum += p_top[2] as u32 + p_bottom[2] as u32;
+                a_sum += p_top[3] as u32 + p_bottom[3] as u32;
+                count += 2;
+            }
+        }
+
+        // 좌우 외곽 경계 (2픽셀 바깥)
+        let border_x_left = (px - 2).max(0) as u32;
+        let border_x_right = (px + pw as i32 + 1).min(width as i32 - 1) as u32;
+        for y in py..(py + ph as i32) {
+            if y >= 0 && y < height as i32 {
+                let p_left = img.get_pixel(border_x_left, y as u32);
+                let p_right = img.get_pixel(border_x_right, y as u32);
+                r_sum += p_left[0] as u32 + p_right[0] as u32;
+                g_sum += p_left[1] as u32 + p_right[1] as u32;
+                b_sum += p_left[2] as u32 + p_right[2] as u32;
+                a_sum += p_left[3] as u32 + p_right[3] as u32;
+                count += 2;
+            }
+        }
+
+        let bg_color = if count > 0 {
+            Rgba([
+                (r_sum / count) as u8,
+                (g_sum / count) as u8,
+                (b_sum / count) as u8,
+                (a_sum / count) as u8,
+            ])
+        } else {
+            Rgba([0, 0, 0, 200]) // fallback
+        };
+
+        // 텍스트 색상 자동 감지 (배경색과 가장 대비가 큰 원본 전경색 추출)
+        let mut candidates = Vec::new();
+        let inner_x_start = px + 2;
+        let inner_x_end = (px + pw as i32 - 2).max(inner_x_start);
+        let inner_y_start = py + 2;
+        let inner_y_end = (py + ph as i32 - 2).max(inner_y_start);
+
+        for y in inner_y_start..inner_y_end {
+            for x in inner_x_start..inner_x_end {
+                if x >= 0 && x < width as i32 && y >= 0 && y < height as i32 {
+                    let p = img.get_pixel(x as u32, y as u32);
+                    let dist = ((p[0] as i32 - bg_color[0] as i32).pow(2)
+                        + (p[1] as i32 - bg_color[1] as i32).pow(2)
+                        + (p[2] as i32 - bg_color[2] as i32).pow(2)) as u32;
+                    candidates.push((dist, p));
                 }
             }
         }
-        
-        // 텍스트 그리기 (흰색 글씨)
-        draw_text_mut(&mut img, Rgba([255, 255, 255, 255]), tx, ty, ab_scale, &font, &r.ko_text);
+
+        // 색상 대비 거리 순으로 내림차순 정렬
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // 단일 픽셀 노이즈를 방지하기 위해 대비가 가장 큰 상위 10% 픽셀의 평균 색상을 텍스트 색상으로 결정
+        let text_color = if !candidates.is_empty() {
+            let take_count = (candidates.len() / 10).max(1);
+            let mut r_total = 0u64;
+            let mut g_total = 0u64;
+            let mut b_total = 0u64;
+            let mut a_total = 0u64;
+            for i in 0..take_count {
+                let p = candidates[i].1;
+                r_total += p[0] as u64;
+                g_total += p[1] as u64;
+                b_total += p[2] as u64;
+                a_total += p[3] as u64;
+            }
+            Rgba([
+                (r_total / take_count as u64) as u8,
+                (g_total / take_count as u64) as u8,
+                (b_total / take_count as u64) as u8,
+                (a_total / take_count as u64) as u8,
+            ])
+        } else {
+            Rgba([255, 255, 255, 255]) // fallback (기본 흰색)
+        };
+
+        // 감지된 배경색으로 해당 영역 채우기 (배경 보존)
+        let rect = Rect::at(px, py).of_size(pw, ph);
+        draw_filled_rect_mut(&mut img, rect, bg_color);
+
+        let center_x = px as f32 + (pw as f32) / 2.0;
+        let center_y = py as f32 + (ph as f32) / 2.0;
+
+        // 실제 그려질 한국어 번역 텍스트(ko_text)의 정확한 가로 폭 계산
+        let mut ko_text_width = 0.0;
+        let mut last_glyph_id = None;
+        for c in r.ko_text.chars() {
+            let glyph_id = font.glyph_id(c);
+            ko_text_width += scaled_font.h_advance(glyph_id);
+            if let Some(last) = last_glyph_id {
+                ko_text_width += scaled_font.kern(last, glyph_id);
+            }
+            last_glyph_id = Some(glyph_id);
+        }
+
+        // 텍스트 그릴 좌상단 시작 좌표 (중앙 정렬)
+        let tx = (center_x - ko_text_width / 2.0).round() as i32;
+        let ty = (center_y - final_text_height / 2.0).round() as i32;
+
+        // 글자와 배경의 밝기차(대비)에 따른 가독성 및 미적 품질 최적화 스타일링
+        let text_brightness = 0.299 * text_color[0] as f32 + 0.587 * text_color[1] as f32 + 0.114 * text_color[2] as f32;
+        let bg_brightness = 0.299 * bg_color[0] as f32 + 0.587 * bg_color[1] as f32 + 0.114 * bg_color[2] as f32;
+
+        // 밝기 차이가 80 미만인 어정쩡한 경우를 제외하고는, 밝은 배경의 어두운 글씨는 외곽선이 없을 때 가장 자연스러움
+        let draw_outline = if (text_brightness - bg_brightness).abs() < 80.0 {
+            true // 대비 보정용 외곽선
+        } else {
+            text_brightness > 128.0 // 밝은 글씨의 경우에만 어두운 외곽선을 드로잉
+        };
+
+        if draw_outline {
+            let outline_color = if text_brightness > 128.0 {
+                Rgba([0, 0, 0, 255]) // 밝은 글씨 -> 검은 테두리
+            } else {
+                Rgba([255, 255, 255, 200]) // 어두운 글씨 -> 반투명 흰 테두리
+            };
+
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    if dx != 0 || dy != 0 {
+                        draw_text_mut(&mut img, outline_color, tx + dx, ty + dy, ab_scale, &font, &r.ko_text);
+                    }
+                }
+            }
+        }
+
+        // 최종 텍스트 드로잉 (감지된 원본 글씨 색상 적용)
+        draw_text_mut(&mut img, text_color, tx, ty, ab_scale, &font, &r.ko_text);
     }
 
     if let Some(parent) = Path::new(&output_path).parent() {
@@ -452,8 +671,10 @@ fn download_model(app: tauri::AppHandle, model_id: String, url: String) -> Resul
 fn kill_existing_llama_servers() {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         let _ = Command::new("taskkill")
             .args(&["/F", "/IM", "llama-server.exe"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
@@ -555,11 +776,18 @@ fn start_llama_server(app: tauri::AppHandle, model_id: String, custom_path: Opti
         args.push("99");
     }
 
-    let mut child = Command::new(&server_path)
-        .args(&args)
+    let mut cmd = Command::new(&server_path);
+    cmd.args(&args)
         .stdout(log_file)
-        .stderr(log_file_err)
-        .spawn()
+        .stderr(log_file_err);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start llama-server. Error: {}", e))?;
         
     // 1초간 대기하여 바로 종료(크래시)되는지 확인
@@ -684,3 +912,4 @@ pub fn run() {
             }
         });
 }
+

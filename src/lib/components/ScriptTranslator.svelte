@@ -26,6 +26,7 @@
     validationError?: string;
     translationTime?: number;
     index?: number;
+    title?: string;
   }
 
   let { isDragging = false } = $props();
@@ -126,6 +127,61 @@
       }
       return item;
     });
+  }
+
+  const isEventLine = (title?: string) => 
+    title ? (title.startsWith('Event ') || title.startsWith('CommonEvent ') || title.startsWith('Troop ')) : false;
+
+  function findConnectedRowsGroup(targetId: number): ExtractedString[] {
+    const idx = extractedStrings.findIndex(i => i.id === targetId);
+    if (idx === -1) {
+      const found = extractedStrings.find(i => i.id === targetId);
+      return found ? [found] : [];
+    }
+
+    const group: ExtractedString[] = [extractedStrings[idx]];
+
+    // Scan backwards
+    let curIdx = idx;
+    while (curIdx > 0) {
+      const prev = extractedStrings[curIdx - 1];
+      const curr = extractedStrings[curIdx];
+      
+      const isConsecutive = (curr.id === prev.id + 10) || (curr.id === prev.id + 1);
+      if (
+        isEventLine(prev.title) &&
+        isEventLine(curr.title) &&
+        prev.title === curr.title &&
+        isConsecutive
+      ) {
+        group.unshift(prev);
+        curIdx--;
+      } else {
+        break;
+      }
+    }
+
+    // Scan forwards
+    curIdx = idx;
+    while (curIdx < extractedStrings.length - 1) {
+      const curr = extractedStrings[curIdx];
+      const next = extractedStrings[curIdx + 1];
+      
+      const isConsecutive = (next.id === curr.id + 10) || (next.id === curr.id + 1);
+      if (
+        isEventLine(curr.title) &&
+        isEventLine(next.title) &&
+        curr.title === next.title &&
+        isConsecutive
+      ) {
+        group.push(next);
+        curIdx++;
+      } else {
+        break;
+      }
+    }
+
+    return group;
   }
 
   // 검색이나 필터가 변경되면 스크롤을 위로 리셋
@@ -1250,7 +1306,8 @@
             id: idCounter++, 
             text: text,
             originalCodeMatch: match[0],
-            translatedText: translatedText
+            translatedText: translatedText,
+            title: script.title
           });
       }
     } else if (item.isGroup && item.groupEntries) {
@@ -1264,7 +1321,8 @@
           id: s.id,
           text: s.code,
           originalCodeMatch: s.code,
-          translatedText: translatedText
+          translatedText: translatedText,
+          title: s.title
         });
       }
     }
@@ -1320,48 +1378,72 @@
   }
 
   async function performTranslation(
-    sourceText: string,
+    sourceTexts: string | string[],
     mode: 'normal' | 'detailed' = 'normal',
     signal?: AbortSignal
-  ): Promise<string> {
+  ): Promise<string | string[]> {
+    const isArrayInput = Array.isArray(sourceTexts);
+    let linesToProcess: string[] = [];
+
+    if (isArrayInput) {
+      linesToProcess = sourceTexts;
+    } else {
+      if (sourceTexts.includes('\n')) {
+        linesToProcess = sourceTexts.split('\n');
+      } else {
+        linesToProcess = [sourceTexts];
+      }
+    }
+
+    const hasMultiLine = linesToProcess.length > 1;
+
     // RPG Maker 제어코드 정밀 전처리 (치환)
     const controlCodeRegex = /([\\₩](?:[a-zA-Z]+(?:\[\d+\])?|[\{\}\*\|\.!\^<>_]))/g;
-    const placeholders: string[] = [];
-    const cleanSourceText = sourceText.replace(controlCodeRegex, (match) => {
-      const ph = `__TAG_${placeholders.length}__`;
-      placeholders.push(match);
-      return ph;
-    });
+    const commentRegex = /^\s*#/;
 
-    // 루비 주석 라인 (#) 감지 및 치환 (여러 줄이고 스크립트 코드 블록인 경우에만 적용)
-    const commentPlaceholders: string[] = [];
-    let processingText = cleanSourceText;
-    const isScriptCodeBlock = sourceText.includes('\n') && scripts.some(s => s.code === sourceText);
-
-    if (isScriptCodeBlock) {
-      const lines = processingText.split('\n');
-      const commentRegex = /^\s*#/;
-      const processedLines = lines.map((line) => {
-        if (commentRegex.test(line)) {
-          const ph = `__COMMENT_LINE_${commentPlaceholders.length}__`;
-          commentPlaceholders.push(line);
-          return ph;
-        }
-        return line;
+    const processedLines = linesToProcess.map((text) => {
+      const placeholders: string[] = [];
+      const cleanText = text.replace(controlCodeRegex, (match) => {
+        const ph = `__TAG_${placeholders.length}__`;
+        placeholders.push(match);
+        return ph;
       });
-      processingText = processedLines.join('\n');
-    }
+
+      const commentPlaceholders: string[] = [];
+      let processingText = cleanText;
+      
+      // 스크립트 코드 블록 식별 (배열 입력이 아니고 개행이 포함된 원본 텍스트일 때)
+      const isScriptCodeBlock = !isArrayInput && typeof sourceTexts === 'string' && sourceTexts.includes('\n') && scripts.some(s => s.code === sourceTexts);
+      if (isScriptCodeBlock) {
+        if (commentRegex.test(processingText)) {
+          const ph = `__COMMENT_LINE_${commentPlaceholders.length}__`;
+          commentPlaceholders.push(processingText);
+          processingText = ph;
+        }
+      }
+
+      return {
+        original: text,
+        processing: processingText,
+        placeholders,
+        commentPlaceholders,
+        isScriptCodeBlock
+      };
+    });
 
     let glossaryRules = "";
     if (selectedFolder) {
+      const allOriginalText = isArrayInput ? sourceTexts.join('\n') : (sourceTexts as string);
       const matchedEntries = Object.entries(glossaryData).filter(([jp, ko]) => {
-        return jp && ko && sourceText.includes(jp);
+        return jp && ko && allOriginalText.includes(jp);
       });
       if (matchedEntries.length > 0) {
         glossaryRules = "\nGlossary (Use these exact translations for the matches):\n" +
           matchedEntries.map(([jp, ko]) => `- "${jp}" -> "${ko}"`).join("\n") + "\n";
       }
     }
+
+    let finalProcessingText = processedLines.map(p => p.processing).join('\n');
 
     let prompt = "";
     if (mode === 'detailed') {
@@ -1371,7 +1453,8 @@ Step 2: Based on the analysis, write the natural, colloquial, and fluent Korean 
 
 You MUST format your output exactly as follows:
 [Analysis]: <Your brief analysis of the nuance, tone, and context in Korean>
-[Korean Translation]: <Your high-quality Korean translation here>
+[Korean Translation]: 
+${hasMultiLine ? 'Korean translation of line 0\nKorean translation of line 1' : '<Your high-quality Korean translation here>'}
 
 Rules:
 1. Maintain the meaning and nuance of the original Japanese.
@@ -1384,10 +1467,12 @@ Rules:
 8. Handle colloquial game dialogue markers and expressions naturally:
    - A standalone or ending small tsu (e.g. "っ", "っ！", "…っ") represents a gasp, groan, breath, or abrupt cutoff of speech. Do not ignore it or translate it literally (like "tsu"). Translate it into a natural Korean expression of exclamation, sigh, or cutoff (e.g., "앗!", "윽!", "읏…", "흡!", or simply "…!").
    - Conversational starters or particles such as "だって" (datte) or "だって…" indicate a defensive, pleading, or explaining tone. Translate them to colloquial Korean starters like "그치만...", "하지만...", "그야..." instead of literal dictionary translations.
-${isScriptCodeBlock ? '9. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
+${processedLines.some(p => p.isScriptCodeBlock) ? '9. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
+${hasMultiLine ? '10. CRITICAL: Preserve the exact number of line breaks (\\n) and original line structure in your translation.\n' : ''}
 CRITICAL: The [Korean Translation] section MUST be written in Korean (한국어) only. Do not use English.
 
-Original text: "${processingText}"`;
+Original text:
+${finalProcessingText}`;
     } else {
       prompt = `Translate the following Japanese game script text into Korean. 
 Rules:
@@ -1402,27 +1487,34 @@ Rules:
 9. Handle colloquial game dialogue markers and expressions naturally:
    - A standalone or ending small tsu (e.g. "っ", "っ！", "…っ") represents a gasp, groan, breath, or abrupt cutoff of speech. Do not ignore it or translate it literally (like "tsu"). Translate it into a natural Korean expression of exclamation, sigh, or cutoff (e.g., "앗!", "윽!", "읏…", "흡!", or simply "…!").
    - Conversational starters or particles such as "だって" (datte) or "だって…" indicate a defensive, pleading, or explaining tone. Translate them to colloquial Korean starters like "그치만...", "하지만...", "그야..." instead of literal dictionary translations.
-${isScriptCodeBlock ? '10. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
+${processedLines.some(p => p.isScriptCodeBlock) ? '10. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
+${hasMultiLine ? '11. CRITICAL: Preserve the exact number of line breaks (\\n) and original line structure in your translation.\n' : ''}
 CRITICAL: The final output MUST be written in Korean (한국어). Do not use English.
 
-Original text: "${processingText}"`;
+Original text:
+${finalProcessingText}`;
     }
 
     const isLlamaCpp = selectedModelId.startsWith('llamacpp:');
-    addLog(`[번역 요청] 원문: "${sourceText}" | 모드: ${mode === 'detailed' ? '자세히 번역' : '일반'} | 모델: ${selectedModelId}`);
+    const logSourceText = isArrayInput ? sourceTexts.join(' / ') : (sourceTexts as string);
+    addLog(`[번역 요청] 원문: "${logSourceText}" | 모드: ${mode === 'detailed' ? '자세히 번역' : '일반'} | 모델: ${selectedModelId}`);
 
     let responseText = '';
 
     if (isLlamaCpp) {
       // llama.cpp 서버 (OpenAI 호환 API)
       await startLlamaIfNeeded(selectedModelId);
-      const examplePrompt = prompt.replace(processingText, "なるほど。");
+      const examplePrompt = prompt.replace(finalProcessingText, hasMultiLine ? "なるほど。\nわかった。" : "なるほど。");
       const systemContent = mode === 'detailed'
         ? "You are a professional Japanese to Korean game script translator. Analyze the nuance and context of the text, then output the final translation in the specified format."
         : "You are a professional Japanese to Korean game script translator. Output ONLY the Korean translation, nothing else.";
       const exampleAssistantResponse = mode === 'detailed'
-        ? "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하거나 동의하는 어조입니다.\n[Korean Translation]: 그렇군요."
-        : "그렇군요.";
+        ? (hasMultiLine 
+            ? "[Analysis]: 상대방의 말에 수긍하고 이해했다고 대답하는 상황입니다.\n[Korean Translation]:\n그렇군요.\n알겠습니다."
+            : "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하거나 동의하는 어조입니다.\n[Korean Translation]: 그렇군요.")
+        : (hasMultiLine
+            ? "그렇군요.\n알겠습니다."
+            : "그렇군요.");
 
       const lcResponse = await fetch("http://127.0.0.1:8080/v1/chat/completions", {
         method: "POST",
@@ -1448,13 +1540,17 @@ Original text: "${processingText}"`;
     } else {
       // Ollama API
       const ollamaModel = selectedModelId.startsWith('ollama:') ? selectedModelId.slice(7) : ollamaModelName;
-      const examplePrompt = prompt.replace(processingText, "なるほど。");
+      const examplePrompt = prompt.replace(finalProcessingText, hasMultiLine ? "なるほど。\nわかった。" : "なるほど。");
       const systemContent = mode === 'detailed'
         ? "You are a professional Japanese to Korean game script translator. You MUST output your translation in the specified format with [Analysis] and [Korean Translation]."
         : "You are a professional Japanese to Korean game script translator. You MUST output your translation in Korean (한국어) only. Do not use English.";
       const exampleAssistantResponse = mode === 'detailed'
-        ? "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하는 상황입니다.\n[Korean Translation]: 그렇군요."
-        : "그렇군요.";
+        ? (hasMultiLine 
+            ? "[Analysis]: 상대방의 말에 수긍하고 이해했다고 대답하는 상황입니다.\n[Korean Translation]:\n그렇군요.\n알겠습니다."
+            : "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하는 상황입니다.\n[Korean Translation]: 그렇군요.")
+        : (hasMultiLine
+            ? "그렇군요.\n알겠습니다."
+            : "그렇군요.");
 
       const response = await fetch("http://127.0.0.1:11434/api/chat", {
         method: "POST",
@@ -1495,148 +1591,222 @@ Original text: "${processingText}"`;
         cleaned = cleaned.replace(/\[Analysis\][\s\S]*?\[Korean Translation\]\s*:\s*/i, '').trim();
       }
     }
-    
-    // 일본어 구두점(마침표, 쉼표)을 한국어 구두점으로 자동 정규화
-    cleaned = cleaned.replace(/。/g, '.').replace(/、/g, ',');
 
-    const prefixRegex = /^(korean\s+translation|translation|korean|한국어\s*번역|한글\s*번역|번역)\s*[:\-]\s*/i;
-    for (let i = 0; i < 5; i++) {
-      const before = cleaned;
-      cleaned = cleaned.replace(prefixRegex, '').trim();
-      cleaned = cleaned.replace(/^["\u201c](([\s\S]*))["\u201d]$/, '$1').trim();
-      cleaned = cleaned.replace(/^\'(([\s\S]*))\'\ *$/, '$1').trim();
-      if (cleaned === before) break;
+    const processLineOutput = (rawOutput: string, item: typeof processedLines[0], sourceText: string) => {
+      let cleanedLine = rawOutput.trim();
+
+      // 바이트 토큰 제거 (<0xE3>, 0xE3>, <0xE3 등 오작동 출력 제거)
+      cleanedLine = cleanedLine.replace(/(?:<0x[0-9a-fA-F]+>|0x[0-9a-fA-F]+>|<0x[0-9a-fA-F]+)\s*/gi, '');
+
+      // 일본어 구두점(마침표, 쉼표)을 한국어 구두점으로 자동 정규화
+      cleanedLine = cleanedLine.replace(/。/g, '.').replace(/、/g, ',');
+
+      const prefixRegex = /^(korean\s+translation|translation|korean|한국어\s*번역|한글\s*번역|번역)\s*[:\-]\s*/i;
+      for (let i = 0; i < 5; i++) {
+        const before = cleanedLine;
+        cleanedLine = cleanedLine.replace(prefixRegex, '').trim();
+        cleanedLine = cleanedLine.replace(/^["\u201c](([\s\S]*))["\u201d]$/, '$1').trim();
+        cleanedLine = cleanedLine.replace(/^\'(([\s\S]*))\'\ *$/, '$1').trim();
+        if (cleanedLine === before) break;
+      }
+
+      // 특수기호 동기화 1: 말줄임표(……) 보존
+      if (item.processing.includes('……') && !cleanedLine.includes('……')) {
+        cleanedLine = cleanedLine.replace(/\.\.\./g, '……');
+      }
+
+      // 특수기호 동기화 2: 괄호 일치화 (대사가 여러 줄로 나뉘어 단일 괄호만 있는 경우도 처리)
+      const quoteRegexBoth = /^["'«“‘](.*)["'»”’]$/;
+      if (quoteRegexBoth.test(cleanedLine)) {
+        cleanedLine = cleanedLine.replace(quoteRegexBoth, '$1').trim();
+      } else {
+        cleanedLine = cleanedLine.replace(/^["'«“‘]/, '').replace(/["'»”’]$/, '').trim();
+      }
+
+      const openBrackets = ['「', '『', '（', '【', '《', '<', '[', '('];
+      const closeBrackets = ['」', '』', '）', '】', '》', '>', ']', ')'];
+      
+      const wrongOpenRegex = /^[「『（【《<\[(]/;
+      const wrongCloseRegex = /[」』）환경?時》>\])]$/;
+
+      // 원문이 여는 괄호로 시작하면 번역문도 강제로 맞춤
+      for (const open of openBrackets) {
+        if (item.processing.startsWith(open) && !cleanedLine.startsWith(open)) {
+          if (wrongOpenRegex.test(cleanedLine)) cleanedLine = cleanedLine.replace(wrongOpenRegex, '');
+          cleanedLine = open + cleanedLine;
+          break;
+        }
+      }
+      // 원문이 닫는 괄호로 끝나면 번역문도 강제로 맞춤
+      for (const close of closeBrackets) {
+        if (item.processing.endsWith(close) && !cleanedLine.endsWith(close)) {
+          if (wrongCloseRegex.test(cleanedLine)) cleanedLine = cleanedLine.replace(wrongCloseRegex, '');
+          cleanedLine = cleanedLine + close;
+          break;
+        }
+      }
+
+      // 원문에 없는 불필요하게 자동 완성된 괄호 제거
+      for (let i = 0; i < openBrackets.length; i++) {
+        const open = openBrackets[i];
+        const close = closeBrackets[i];
+        
+        if (!item.processing.includes(close)) {
+          const escapedClose = close.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const endRegex = new RegExp(`${escapedClose}\\s*([.,?!~₩]*\\s*)$`);
+          if (endRegex.test(cleanedLine)) {
+            cleanedLine = cleanedLine.replace(endRegex, '$1').trim();
+          }
+        }
+        
+        if (!item.processing.includes(open)) {
+          const escapedOpen = open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const startRegex = new RegExp(`^(\\s*[.,?!~₩]*\\s*)${escapedOpen}`);
+          if (startRegex.test(cleanedLine)) {
+            cleanedLine = cleanedLine.replace(startRegex, '$1').trim();
+          }
+        }
+      }
+
+      // 글로서리 강제 적용
+      if (selectedFolder) {
+        for (const [jp, ko] of Object.entries(glossaryData)) {
+          if (jp && ko && item.processing.includes(jp)) {
+            if (cleanedLine.includes(jp)) {
+              cleanedLine = cleanedLine.replaceAll(jp, ko);
+            }
+            if (jp === '・・・' && !cleanedLine.includes('・・・')) {
+              cleanedLine = cleanedLine.replace(/\.\.\./g, ko).replace(/…/g, ko);
+            } else if (jp === '……' && !cleanedLine.includes('……')) {
+              cleanedLine = cleanedLine.replace(/\.\.\./g, ko).replace(/…/g, ko);
+            }
+          }
+        }
+      }
+
+      // 루비 주석 플레이스홀더 복원 (__COMMENT_LINE_X__)
+      for (let i = 0; i < item.commentPlaceholders.length; i++) {
+        const reg = new RegExp(`__\\s*[cC][oO][mM][mM][eE][nN][tT]_\\s*[lL][iI][nN][eE]\\s*_${i}\\s*__`, 'g');
+        cleanedLine = cleanedLine.replace(reg, item.commentPlaceholders[i]);
+      }
+
+      // RPG Maker 제어코드 정밀 후처리 (원복)
+      for (let i = 0; i < item.placeholders.length; i++) {
+        const reg = new RegExp(`__\\s*[tT][aA][gG]\\s*_${i}\\s*__`, 'g');
+        cleanedLine = cleanedLine.replace(reg, item.placeholders[i]);
+      }
+
+      // 원문의 앞쪽 공백(들여쓰기) 및 뒤쪽 공백(개행 등) 보존
+      const leadingSpaces = sourceText.match(/^\s*/)?.[0] || '';
+      const trailingSpaces = sourceText.match(/\s*$/)?.[0] || '';
+      return leadingSpaces + cleanedLine + trailingSpaces;
+    };
+
+    let parsedLines: string[] = [];
+    let tagParsedSuccessfully = false;
+
+    if (hasMultiLine) {
+      const splitLines = cleaned.split('\n');
+      if (splitLines.length === processedLines.length) {
+        tagParsedSuccessfully = true;
+        parsedLines = splitLines;
+      }
     }
 
-    // 특수기호 동기화 1: 말줄임표(……) 보존
-    if (processingText.includes('……') && !cleaned.includes('……')) {
-      cleaned = cleaned.replace(/\.\.\./g, '……');
-    }
-
-    // 특수기호 동기화 2: 괄호 일치화 (대사가 여러 줄로 나뉘어 단일 괄호만 있는 경우도 처리)
-    const quoteRegexBoth = /^["'«“‘](.*)["'»”’]$/;
-    if (quoteRegexBoth.test(cleaned)) {
-      cleaned = cleaned.replace(quoteRegexBoth, '$1').trim();
+    if (hasMultiLine) {
+      if (tagParsedSuccessfully) {
+        const finalResults = parsedLines.map((rawLine, idx) => {
+          return processLineOutput(rawLine, processedLines[idx], linesToProcess[idx]);
+        });
+        return (isArrayInput ? finalResults : finalResults.join('\n')) as any;
+      } else {
+        // Fallback: Translate each line individually
+        addLog(`[경고] 줄 바꿈 개수 불일치로 인해 개별 번역으로 전환합니다.`);
+        const finalResults = [];
+        for (let idx = 0; idx < processedLines.length; idx++) {
+          const item = processedLines[idx];
+          const singleResult = await performTranslation(item.original, mode, signal) as string;
+          finalResults.push(singleResult);
+        }
+        return (isArrayInput ? finalResults : finalResults.join('\n')) as any;
+      }
     } else {
-      cleaned = cleaned.replace(/^["'«“‘]/, '').replace(/["'»”’]$/, '').trim();
+      const finalResult = processLineOutput(cleaned, processedLines[0], linesToProcess[0]);
+      return (isArrayInput ? [finalResult] : finalResult) as any;
     }
-
-    const openBrackets = ['「', '『', '（', '【', '《', '<', '[', '('];
-    const closeBrackets = ['」', '』', '）', '】', '》', '>', ']', ')'];
-    
-    const wrongOpenRegex = /^[「『（【《<\[(]/;
-    const wrongCloseRegex = /[」』）환경?時》>\])]$/;
-
-    // 원문이 여는 괄호로 시작하면 번역문도 강제로 맞춤
-    for (const open of openBrackets) {
-      if (processingText.startsWith(open) && !cleaned.startsWith(open)) {
-        if (wrongOpenRegex.test(cleaned)) cleaned = cleaned.replace(wrongOpenRegex, '');
-        cleaned = open + cleaned;
-        break;
-      }
-    }
-    // 원문이 닫는 괄호로 끝나면 번역문도 강제로 맞춤
-    for (const close of closeBrackets) {
-      if (processingText.endsWith(close) && !cleaned.endsWith(close)) {
-        if (wrongCloseRegex.test(cleaned)) cleaned = cleaned.replace(wrongCloseRegex, '');
-        cleaned = cleaned + close;
-        break;
-      }
-    }
-
-    // 원문에 없는 불필요하게 자동 완성된 괄호 제거
-    for (let i = 0; i < openBrackets.length; i++) {
-      const open = openBrackets[i];
-      const close = closeBrackets[i];
-      
-      if (!processingText.includes(close)) {
-        const escapedClose = close.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const endRegex = new RegExp(`${escapedClose}\\s*([.,?!~₩]*\\s*)$`);
-        if (endRegex.test(cleaned)) {
-          cleaned = cleaned.replace(endRegex, '$1').trim();
-        }
-      }
-      
-      if (!processingText.includes(open)) {
-        const escapedOpen = open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const startRegex = new RegExp(`^(\\s*[.,?!~₩]*\\s*)${escapedOpen}`);
-        if (startRegex.test(cleaned)) {
-          cleaned = cleaned.replace(startRegex, '$1').trim();
-        }
-      }
-    }
-
-    // 글로서리 강제 적용
-    if (selectedFolder) {
-      for (const [jp, ko] of Object.entries(glossaryData)) {
-        if (jp && ko && processingText.includes(jp)) {
-          if (cleaned.includes(jp)) {
-            cleaned = cleaned.replaceAll(jp, ko);
-          }
-          if (jp === '・・・' && !cleaned.includes('・・・')) {
-            cleaned = cleaned.replace(/\.\.\./g, ko).replace(/…/g, ko);
-          } else if (jp === '……' && !cleaned.includes('……')) {
-            cleaned = cleaned.replace(/\.\.\./g, ko).replace(/…/g, ko);
-          }
-        }
-      }
-    }
-
-    // 루비 주석 플레이스홀더 복원 (__COMMENT_LINE_X__)
-    for (let i = 0; i < commentPlaceholders.length; i++) {
-      const reg = new RegExp(`__\\s*[cC][oO][mM][mM][eE][nN][tT]_\\s*[lL][iI][nN][eE]\\s*_${i}\\s*__`, 'g');
-      cleaned = cleaned.replace(reg, commentPlaceholders[i]);
-    }
-
-    // RPG Maker 제어코드 정밀 후처리 (원복)
-    for (let i = 0; i < placeholders.length; i++) {
-      const reg = new RegExp(`__\\s*[tT][aA][gG]\\s*_${i}\\s*__`, 'g');
-      cleaned = cleaned.replace(reg, placeholders[i]);
-    }
-
-    // 원문의 앞쪽 공백(들여쓰기) 및 뒤쪽 공백(개행 등) 보존
-    const leadingSpaces = sourceText.match(/^\s*/)?.[0] || '';
-    const trailingSpaces = sourceText.match(/\s*$/)?.[0] || '';
-    return leadingSpaces + cleaned + trailingSpaces;
   }
 
   async function handleTranslateRow(
-    item: ExtractedString,
+    items: ExtractedString | ExtractedString[],
     signal?: AbortSignal,
     mode: 'normal' | 'detailed' = 'normal',
     skipSaveStaged = false
   ) {
-    updateExtractedString(item.id, { translatedText: "번역 중..." });
+    const isArray = Array.isArray(items);
+    const itemList = isArray ? items : [items];
+
+    for (const item of itemList) {
+      updateExtractedString(item.id, { translatedText: "번역 중..." });
+    }
 
     const requestStartTime = Date.now();
 
     try {
-      const cleanText = await performTranslation(item.text, mode, signal);
-      const elapsed = ((Date.now() - requestStartTime) / 1000).toFixed(2);
+      const sourceTexts = itemList.map(i => i.text);
+      const performInput = sourceTexts.length === 1 ? sourceTexts[0] : sourceTexts;
+      const translationResult = await performTranslation(performInput, mode, signal);
       
-      updateExtractedString(item.id, {
-        translatedText: cleanText,
-        errorMsg: undefined,
-        translationTime: parseFloat(elapsed)
-      });
-      addLog(`[번역 완료] 결과: "${cleanText}" (소요 시간: ${elapsed}초)`);
+      const elapsed = ((Date.now() - requestStartTime) / 1000).toFixed(2);
+      const resultsList = Array.isArray(translationResult) ? translationResult : [translationResult];
 
-      if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패" && cleanText !== "번역 중단") {
-        cacheData[item.text] = cleanText;
+      for (let i = 0; i < itemList.length; i++) {
+        const item = itemList[i];
+        const cleanText = resultsList[i] || '';
+        
+        // 일괄 번역 시 이미 유효한 번역이 완성되어 있는 항목은 보호
+        const shouldUpdate = !item.translatedText || 
+                             item.translatedText === "번역 실패" || 
+                             item.translatedText === "번역 중..." || 
+                             item.translatedText === "번역 중단" || 
+                             item.validationError !== undefined ||
+                             !isArray;
+
+        if (shouldUpdate) {
+          updateExtractedString(item.id, {
+            translatedText: cleanText,
+            errorMsg: undefined,
+            translationTime: parseFloat(elapsed)
+          });
+
+          if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패" && cleanText !== "번역 중단") {
+            cacheData[item.text] = cleanText;
+          }
+        }
+      }
+      
+      if (selectedFolder) {
         await saveCache();
       }
+
+      const logTexts = itemList.map((item, idx) => `"${item.text}" -> "${resultsList[idx] || ''}"`).join(', ');
+      addLog(`[번역 완료] 결과: [${logTexts}] (소요 시간: ${elapsed}초)`);
+
     } catch(e: any) {
       if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
-        updateExtractedString(item.id, { translatedText: "번역 중단" });
+        for (const item of itemList) {
+          updateExtractedString(item.id, { translatedText: "번역 중단" });
+        }
         addLog(`[번역 중단] 작업이 사용자에 의해 중지되었습니다.`);
-        throw e; // 호출한 상위 함수로 AbortError 전파
+        throw e;
       }
       console.error("Translation Error", e);
       const errMsg = e?.message || JSON.stringify(e) || String(e);
-      updateExtractedString(item.id, {
-        translatedText: "번역 실패",
-        errorMsg: errMsg
-      });
+      for (const item of itemList) {
+        updateExtractedString(item.id, {
+          translatedText: "번역 실패",
+          errorMsg: errMsg
+        });
+      }
       addLog(`[번역 실패] 오류: ${errMsg}`);
     } finally {
       if (!skipSaveStaged) {
@@ -1657,7 +1827,7 @@ Original text: "${processingText}"`;
     const requestStartTime = Date.now();
 
     try {
-      const cleanText = await performTranslation(manualSourceText, mode);
+      const cleanText = await performTranslation(manualSourceText, mode) as string;
       manualTranslatedText = cleanText;
       manualTranslateTime = parseFloat(((Date.now() - requestStartTime) / 1000).toFixed(2));
     } catch (e: any) {
@@ -1903,26 +2073,53 @@ Original text: "${processingText}"`;
 
     try {
       await invoke('prevent_sleep');
+      const translatedIds = new Set<number>();
+
       for (let item of itemsToTranslate) {
         if (cancelRequested) {
           addLog("사용자에 의해 일괄 번역이 중단되었습니다.");
           break;
         }
 
-        // validationError가 있으면 캐시 없이 항상 재번역
-        // 자세히 번역(detailed) 모드인 경우 캐시를 적용하지 않고 재번역하여 고품질 결과를 유도하도록 함
-        if (mode === 'normal' && !item.validationError && selectedFolder && cacheData[item.text]) {
-          updateExtractedString(item.id, {
-            translatedText: cacheData[item.text],
-            errorMsg: undefined
-          });
-          batchCompleted++;
-          addLog(`[캐시 적용] 원문: "${item.text}" -> "${cacheData[item.text]}"`);
+        if (translatedIds.has(item.id)) {
+          continue;
+        }
+
+        // Find connected group for this item
+        const group = findConnectedRowsGroup(item.id);
+
+        // Check if there is cache for all items in the group (for normal mode)
+        let allCached = true;
+        for (const g of group) {
+          if (mode !== 'normal' || g.validationError || !selectedFolder || !cacheData[g.text]) {
+            allCached = false;
+            break;
+          }
+        }
+
+        if (allCached) {
+          for (const g of group) {
+            updateExtractedString(g.id, {
+              translatedText: cacheData[g.text],
+              errorMsg: undefined
+            });
+            translatedIds.add(g.id);
+            if (itemsToTranslate.some(i => i.id === g.id)) {
+              batchCompleted++;
+            }
+            addLog(`[캐시 적용] 원문: "${g.text}" -> "${cacheData[g.text]}"`);
+          }
           continue;
         }
 
         try {
-          await handleTranslateRow(item, translationAbortController.signal, mode, true);
+          await handleTranslateRow(group.length > 1 ? group : item, translationAbortController.signal, mode, true);
+          for (const g of group) {
+            translatedIds.add(g.id);
+            if (itemsToTranslate.some(i => i.id === g.id)) {
+              batchCompleted++;
+            }
+          }
         } catch (err: any) {
           if (err.name === 'AbortError' || (err.message && err.message.includes('abort'))) {
             addLog("일괄 번역이 즉시 중지되었습니다.");
@@ -1930,8 +2127,6 @@ Original text: "${processingText}"`;
           }
           throw err;
         }
-        
-        batchCompleted++;
         
         if (batchCompleted % 10 === 0) {
           saveCurrentTranslations();
@@ -2196,11 +2391,15 @@ Original text: "${processingText}"`;
     }
 
     // 번역 시작
+    const group = findConnectedRowsGroup(item.id);
     const controller = new AbortController();
-    rowAbortControllers.set(item.id, controller);
+    
+    for (const g of group) {
+      rowAbortControllers.set(g.id, controller);
+    }
 
     try {
-      await handleTranslateRow(item, controller.signal, mode);
+      await handleTranslateRow(group.length > 1 ? group : item, controller.signal, mode);
     } catch (e: any) {
       if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
         console.log(`Row translation aborted for item ${item.id}`);
@@ -2208,7 +2407,9 @@ Original text: "${processingText}"`;
         throw e;
       }
     } finally {
-      rowAbortControllers.delete(item.id);
+      for (const g of group) {
+        rowAbortControllers.delete(g.id);
+      }
     }
   }
 

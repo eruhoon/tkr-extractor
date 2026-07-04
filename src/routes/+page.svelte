@@ -15,9 +15,14 @@
 
   let showSettingsModal = $state(false);
   let confirmStagedLoad = $state(false);
+  let translationConcurrency = $state(1);
 
   onMount(() => {
     confirmStagedLoad = localStorage.getItem('confirmStagedLoad') === 'true';
+    const savedConcurrency = localStorage.getItem('translationConcurrency');
+    if (savedConcurrency) {
+      translationConcurrency = parseInt(savedConcurrency, 10) || 1;
+    }
     let unlistenDragEnter: (() => void) | undefined;
     let unlistenDragLeave: (() => void) | undefined;
     let unlistenDrop: (() => void) | undefined;
@@ -94,6 +99,10 @@
   function toggleConfirmStagedLoad() {
     localStorage.setItem('confirmStagedLoad', confirmStagedLoad ? 'true' : 'false');
   }
+
+  function saveConcurrency() {
+    localStorage.setItem('translationConcurrency', translationConcurrency.toString());
+  }
 </script>
 
 <div class="app-layout">
@@ -160,6 +169,25 @@
               >
               <span class="slider round"></span>
             </label>
+          </div>
+
+          <div class="setting-item" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 1rem;">
+            <div class="setting-info">
+              <span class="setting-title">동시 번역 프로세스 개수 (병렬 처리)</span>
+              <span class="setting-desc">일괄 번역 시 동시에 실행할 작업 개수입니다. 로컬 LLM 사양(VRAM)이 충분할 때만 값을 높이세요.</span>
+            </div>
+            <select 
+              id="concurrency-select"
+              bind:value={translationConcurrency}
+              onchange={saveConcurrency}
+              style="width: 100px; height: 32px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 4px; color: #f1f5f9; padding: 0 0.5rem; cursor: pointer;"
+            >
+              <option value={1}>1 (순차)</option>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+              <option value={4}>4</option>
+              <option value={5}>5</option>
+            </select>
           </div>
         </div>
       </div>

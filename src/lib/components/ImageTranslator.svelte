@@ -772,14 +772,33 @@ Output ONLY the JSON array without any markdown or conversational text.`;
         await startLlamaIfNeeded(selectedModelId);
       }
 
-      for (const img of pendingImages) {
-        if (cancelRequested) {
-          addLog("사용자에 의해 이미지 일괄 번역이 중단되었습니다.");
-          break;
+      const savedConcurrency = localStorage.getItem('translationConcurrency');
+      const concurrency = savedConcurrency ? (parseInt(savedConcurrency, 10) || 1) : 1;
+
+      let currentImageIndex = 0;
+
+      const worker = async () => {
+        while (currentImageIndex < pendingImages.length && !cancelRequested) {
+          const imgIndex = currentImageIndex++;
+          if (imgIndex >= pendingImages.length) break;
+          const img = pendingImages[imgIndex];
+          if (!img) break;
+
+          try {
+            await processImageOllama(img);
+            batchCompleted++;
+          } catch (e) {
+            console.error(`Error processing image ${img.name}`, e);
+          }
         }
-        await processImageOllama(img);
-        batchCompleted++;
-      }
+      };
+
+      const workers = Array(Math.min(concurrency, pendingImages.length))
+        .fill(null)
+        .map(() => worker());
+
+      await Promise.all(workers);
+
     } catch (e) {
       console.error("Batch image translation error", e);
     } finally {
@@ -788,8 +807,10 @@ Output ONLY the JSON array without any markdown or conversational text.`;
       batchTotal = 0;
       batchCompleted = 0;
       if (cancelRequested) {
+        addLog("이미지 일괄 번역이 중단되었습니다.");
         alert("이미지 일괄 번역이 중단되었습니다.");
       } else {
+        addLog("이미지 일괄 번역이 완료되었습니다!");
         alert("이미지 일괄 번역이 완료되었습니다!");
       }
       cancelRequested = false;
@@ -798,6 +819,7 @@ Output ONLY the JSON array without any markdown or conversational text.`;
       // 다음 연속 번역 요청 및 스크립트 번역기 탭에서의 재가동 시간을 단축시킵니다.
     }
   }
+
 
   function getStatusLabel(status: string) {
     switch(status) {

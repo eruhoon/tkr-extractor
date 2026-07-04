@@ -1744,7 +1744,8 @@ ${finalProcessingText}`;
     items: ExtractedString | ExtractedString[],
     signal?: AbortSignal,
     mode: 'normal' | 'detailed' = 'normal',
-    skipSaveStaged = false
+    skipSaveStaged = false,
+    enqueueWrite?: (fn: () => Promise<void>) => Promise<void>
   ) {
     const isArray = Array.isArray(items);
     const itemList = isArray ? items : [items];
@@ -1789,7 +1790,11 @@ ${finalProcessingText}`;
       }
       
       if (selectedFolder) {
-        await saveCache();
+        if (enqueueWrite) {
+          await enqueueWrite(() => saveCache());
+        } else {
+          await saveCache();
+        }
       }
 
       const logTexts = itemList.map((item, idx) => `"${item.text}" -> "${resultsList[idx] || ''}"`).join(', ');
@@ -1815,7 +1820,11 @@ ${finalProcessingText}`;
     } finally {
       if (!skipSaveStaged) {
         saveCurrentTranslations();
-        await saveStagedFile();
+        if (enqueueWrite) {
+          await enqueueWrite(() => saveStagedFile());
+        } else {
+          await saveStagedFile();
+        }
       }
     }
   }
@@ -2077,68 +2086,104 @@ ${finalProcessingText}`;
 
     try {
       await invoke('prevent_sleep');
-      const translatedIds = new Set<number>();
 
-      for (let item of itemsToTranslate) {
-        if (cancelRequested) {
-          addLog("사용자에 의해 일괄 번역이 중단되었습니다.");
-          break;
-        }
+      const savedConcurrency = localStorage.getItem('translationConcurrency');
+      const concurrency = savedConcurrency ? (parseInt(savedConcurrency, 10) || 1) : 1;
 
-        if (translatedIds.has(item.id)) {
-          continue;
-        }
-
-        // Find connected group for this item
+      // Group unique items to avoid concurrent work on same groups
+      const groupsToTranslate: ExtractedString[][] = [];
+      const processedIds = new Set<number>();
+      for (const item of itemsToTranslate) {
+        if (processedIds.has(item.id)) continue;
         const group = findConnectedRowsGroup(item.id);
-
-        // Check if there is cache for all items in the group (for normal mode)
-        let allCached = true;
+        groupsToTranslate.push(group);
         for (const g of group) {
-          if (mode !== 'normal' || g.validationError || !selectedFolder || !cacheData[g.text]) {
-            allCached = false;
-            break;
-          }
-        }
-
-        if (allCached) {
-          for (const g of group) {
-            updateExtractedString(g.id, {
-              translatedText: cacheData[g.text],
-              errorMsg: undefined
-            });
-            translatedIds.add(g.id);
-            if (itemsToTranslate.some(i => i.id === g.id)) {
-              batchCompleted++;
-            }
-            addLog(`[캐시 적용] 원문: "${g.text}" -> "${cacheData[g.text]}"`);
-          }
-          continue;
-        }
-
-        try {
-          await handleTranslateRow(group.length > 1 ? group : item, translationAbortController.signal, mode, true);
-          for (const g of group) {
-            translatedIds.add(g.id);
-            if (itemsToTranslate.some(i => i.id === g.id)) {
-              batchCompleted++;
-            }
-          }
-        } catch (err: any) {
-          if (err.name === 'AbortError' || (err.message && err.message.includes('abort'))) {
-            addLog("일괄 번역이 즉시 중지되었습니다.");
-            break;
-          }
-          throw err;
-        }
-        
-        if (batchCompleted % 10 === 0) {
-          saveCurrentTranslations();
-          await saveStagedFile();
+          processedIds.add(g.id);
         }
       }
+
+      // Safe serialized file writer queue to prevent race conditions on JSON files
+      let fileWriteQueue = Promise.resolve();
+      const enqueueFileWrite = (fn: () => Promise<void>) => {
+        fileWriteQueue = fileWriteQueue.then(async () => {
+          try {
+            await fn();
+          } catch (e) {
+            console.error("Queue file write error", e);
+          }
+        });
+        return fileWriteQueue;
+      };
+
+      let currentGroupIndex = 0;
+
+      const worker = async () => {
+        while (currentGroupIndex < groupsToTranslate.length && !cancelRequested) {
+          const groupIndex = currentGroupIndex++;
+          if (groupIndex >= groupsToTranslate.length) break;
+          const group = groupsToTranslate[groupIndex];
+          if (!group) break;
+
+          // Check if there is cache for all items in the group (for normal mode)
+          let allCached = true;
+          for (const g of group) {
+            if (mode !== 'normal' || g.validationError || !selectedFolder || !cacheData[g.text]) {
+              allCached = false;
+              break;
+            }
+          }
+
+          if (allCached) {
+            for (const g of group) {
+              updateExtractedString(g.id, {
+                translatedText: cacheData[g.text],
+                errorMsg: undefined
+              });
+              if (itemsToTranslate.some(i => i.id === g.id)) {
+                batchCompleted++;
+              }
+              addLog(`[캐시 적용] 원문: "${g.text}" -> "${cacheData[g.text]}"`);
+            }
+            continue;
+          }
+
+          try {
+            await handleTranslateRow(
+              group.length > 1 ? group : group[0], 
+              translationAbortController?.signal, 
+              mode, 
+              true, 
+              enqueueFileWrite
+            );
+            
+            for (const g of group) {
+              if (itemsToTranslate.some(i => i.id === g.id)) {
+                batchCompleted++;
+              }
+            }
+
+            if (batchCompleted > 0 && batchCompleted % 10 === 0) {
+              saveCurrentTranslations();
+              await enqueueFileWrite(() => saveStagedFile());
+            }
+          } catch (err: any) {
+            if (err.name === 'AbortError' || (err.message && err.message.includes('abort'))) {
+              addLog("일괄 번역이 중지되었습니다.");
+              break;
+            }
+            console.error("Worker translation error", err);
+          }
+        }
+      };
+
+      const workers = Array(Math.min(concurrency, groupsToTranslate.length))
+        .fill(null)
+        .map(() => worker());
+
+      await Promise.all(workers);
+
       saveCurrentTranslations();
-      await saveStagedFile();
+      await enqueueFileWrite(() => saveStagedFile());
     } catch (e) {
       console.error("Batch translation error", e);
     } finally {
@@ -2366,7 +2411,7 @@ ${finalProcessingText}`;
   }
 
   async function handleManualTranslationChange(item: ExtractedString) {
-    const cleanText = item.translatedText ? item.translatedText.trim() : '';
+    const cleanText = item.translatedText || '';
     saveCurrentTranslations();
     
     if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패") {

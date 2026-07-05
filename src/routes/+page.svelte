@@ -17,10 +17,12 @@
   let confirmStagedLoad = $state(false);
   let translationConcurrency = $state(1);
   let enableGroupTranslation = $state(true);
+  let enableContextForSingleTranslation = $state(true);
 
   onMount(() => {
     confirmStagedLoad = localStorage.getItem('confirmStagedLoad') === 'true';
     enableGroupTranslation = localStorage.getItem('enableGroupTranslation') !== 'false';
+    enableContextForSingleTranslation = localStorage.getItem('enableContextForSingleTranslation') !== 'false';
     const savedConcurrency = localStorage.getItem('translationConcurrency');
     if (savedConcurrency) {
       translationConcurrency = parseInt(savedConcurrency, 10) || 1;
@@ -104,6 +106,10 @@
 
   function toggleEnableGroupTranslation() {
     localStorage.setItem('enableGroupTranslation', enableGroupTranslation ? 'true' : 'false');
+  }
+
+  function toggleEnableContextForSingleTranslation() {
+    localStorage.setItem('enableContextForSingleTranslation', enableContextForSingleTranslation ? 'true' : 'false');
   }
 
   function saveConcurrency() {
@@ -211,6 +217,22 @@
               <span class="slider round"></span>
             </label>
           </div>
+
+          <div class="setting-item" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 1rem;">
+            <div class="setting-info">
+              <span class="setting-title">단일 번역 시 전후 문맥 참조 (Context-Aware)</span>
+              <span class="setting-desc">활성화 시 한 줄만 번역할 때도 앞뒤 대사를 참고용 문맥으로 제공하여 번역 품질을 높입니다. (줄 개수 불일치 문제 없음)</span>
+            </div>
+            <label class="switch" for="enable-context-for-single-translation-checkbox">
+              <input 
+                id="enable-context-for-single-translation-checkbox"
+                type="checkbox" 
+                bind:checked={enableContextForSingleTranslation} 
+                onchange={toggleEnableContextForSingleTranslation}
+              >
+              <span class="slider round"></span>
+            </label>
+          </div>
         </div>
       </div>
     </div>
@@ -228,6 +250,7 @@
         bind:this={scriptTranslatorRef} 
         isDragging={isDragging && activeTab === 'script'} 
         enableGroupTranslation={enableGroupTranslation}
+        enableContextForSingleTranslation={enableContextForSingleTranslation}
       />
     {:else if activeTab === 'image'}
       <ImageTranslator 

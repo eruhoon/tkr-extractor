@@ -30,7 +30,7 @@
     workerIndex?: number;
   }
 
-  let { isDragging = false, enableGroupTranslation = true } = $props();
+  let { isDragging = false, enableGroupTranslation = true, enableContextForSingleTranslation = true } = $props();
 
   let originalFilePath = $state('');
   let scripts = $state.raw<ScriptEntry[]>([]);
@@ -203,6 +203,40 @@
     }
 
     return group;
+  }
+
+  function getContextLines(item: ExtractedString, windowSize = 2): { prev: string[], next: string[] } {
+    const idx = extractedStrings.findIndex(i => i.id === item.id);
+    if (idx === -1) return { prev: [], next: [] };
+    
+    const prev: string[] = [];
+    const next: string[] = [];
+    
+    // Scan backwards
+    let cur = idx - 1;
+    while (cur >= 0 && prev.length < windowSize) {
+      const p = extractedStrings[cur];
+      if (isEventLine(p.title) && isEventLine(item.title) && p.title === item.title) {
+        prev.unshift(p.text);
+      } else {
+        break;
+      }
+      cur--;
+    }
+    
+    // Scan forwards
+    cur = idx + 1;
+    while (cur < extractedStrings.length && next.length < windowSize) {
+      const n = extractedStrings[cur];
+      if (isEventLine(n.title) && isEventLine(item.title) && n.title === item.title) {
+        next.push(n.text);
+      } else {
+        break;
+      }
+      cur++;
+    }
+    
+    return { prev, next };
   }
 
   // 검색이나 필터가 변경되면 스크롤을 위로 리셋
@@ -1421,7 +1455,8 @@
   async function performTranslation(
     sourceTexts: string | string[],
     mode: 'normal' | 'detailed' = 'normal',
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    context?: { prev: string[], next: string[] }
   ): Promise<string | string[]> {
     const isArrayInput = Array.isArray(sourceTexts);
     let linesToProcess: string[] = [];
@@ -1488,6 +1523,18 @@
       ? processedLines.map((p, idx) => `<line_${idx}>${p.processing}</line_${idx}>`).join('\n')
       : processedLines.map(p => p.processing).join('\n');
 
+    let contextSection = "";
+    if (context && (context.prev.length > 0 || context.next.length > 0)) {
+      contextSection = "\nReference Context (Do NOT translate these lines, only use them for context):\n";
+      if (context.prev.length > 0) {
+        contextSection += `[Preceding Dialogue]\n${context.prev.map(t => `- ${t}`).join('\n')}\n`;
+      }
+      if (context.next.length > 0) {
+        contextSection += `[Succeeding Dialogue]\n${context.next.map(t => `- ${t}`).join('\n')}\n`;
+      }
+      contextSection += "\nCRITICAL RULE: Translate ONLY the 'Original text' below. Do NOT translate the reference context lines. Keep the speaker labels and punctuation identical to the 'Original text'.\n";
+    }
+
     let prompt = "";
     if (mode === 'detailed') {
       prompt = `Translate the following Japanese game script text into Korean. To ensure the highest quality, you must perform the translation in two steps:
@@ -1513,7 +1560,7 @@ Rules:
 ${processedLines.some(p => p.isScriptCodeBlock) ? '9. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
 ${hasMultiLine ? '10. CRITICAL: You MUST preserve the XML-like tags (<line_0>, <line_1>, etc.) in your output. Translate the content of each tag and put it in the corresponding tag in the output. Do not merge or skip tags.\n' : ''}
 CRITICAL: The [Korean Translation] section MUST be written in Korean (한국어) only. Do not use English.
-
+${contextSection}
 Original text:
 ${finalProcessingText}`;
     } else {
@@ -1533,7 +1580,7 @@ Rules:
 ${processedLines.some(p => p.isScriptCodeBlock) ? '10. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
 ${hasMultiLine ? '11. CRITICAL: You MUST preserve the XML-like tags (<line_0>, <line_1>, etc.) in your output. Translate the content of each tag and put it in the corresponding tag in the output. Do not merge or skip tags.\n' : ''}
 CRITICAL: The final output MUST be written in Korean (한국어). Do not use English.
-
+${contextSection}
 Original text:
 ${finalProcessingText}`;
     }
@@ -1835,12 +1882,17 @@ ${finalProcessingText}`;
       updateExtractedString(item.id, { translatedText: "번역 중...", workerIndex });
     }
 
+    let context: { prev: string[], next: string[] } | undefined = undefined;
+    if (itemList.length === 1 && enableContextForSingleTranslation) {
+      context = getContextLines(itemList[0]);
+    }
+
     const requestStartTime = Date.now();
 
     try {
       const sourceTexts = itemList.map(i => i.text);
       const performInput = sourceTexts.length === 1 ? sourceTexts[0] : sourceTexts;
-      const translationResult = await performTranslation(performInput, mode, signal);
+      const translationResult = await performTranslation(performInput, mode, signal, context);
       
       const elapsed = ((Date.now() - requestStartTime) / 1000).toFixed(2);
       const resultsList = Array.isArray(translationResult) ? translationResult : [translationResult];

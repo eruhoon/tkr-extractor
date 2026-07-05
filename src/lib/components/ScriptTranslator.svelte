@@ -27,6 +27,7 @@
     translationTime?: number;
     index?: number;
     title?: string;
+    workerIndex?: number;
   }
 
   let { isDragging = false } = $props();
@@ -439,13 +440,29 @@
     return false;
   }
 
-  async function startLlamaIfNeeded(modelId: string) {
+  async function startLlamaIfNeeded(modelId: string, forceStartAfterDownload = false) {
     if (!modelId.startsWith('llamacpp:')) return;
     const preset = llamacppPresets.find(p => p.id === modelId);
     if (!preset) return;
 
     // 이미 같은 모델로 ready 상태면 패스
     if (llamaCurrentModelId === modelId && llamaServerStatus === 'ready') return;
+
+    // 병렬 작업 시 여러 워커가 동시에 서버 가동/다운로드를 시도하지 않도록 대기
+    if (!forceStartAfterDownload && (llamaServerStatus === 'starting' || llamaServerStatus === 'downloading')) {
+      while (llamaServerStatus === 'starting' || llamaServerStatus === 'downloading') {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      if (llamaServerStatus === 'ready' && llamaCurrentModelId === modelId) {
+        return;
+      }
+      if (llamaServerStatus === 'error') {
+        throw new Error('llama-server 시작 실패 또는 다운로드 취소');
+      }
+    }
+
+    // 서버 시작 중 상태로 즉시 락 설정
+    llamaServerStatus = 'starting';
 
     try {
       // 1. 로컬에 모델이 존재하는지 확인
@@ -577,8 +594,8 @@
         const preset = llamacppPresets.find(p => p.id === selectedModelId);
         if (preset && preset.modelName === modelId) {
           downloadProgress = 100;
-          // 다운로드 완료되었으므로 자동으로 서버 구동 재시도
-          startLlamaIfNeeded(selectedModelId).catch(e => addLog(`[llama.cpp] 다운로드 후 자동 시작 실패: ${e}`));
+          // 다운로드 완료되었으므로 자동으로 서버 구동 재시도 (forceStartAfterDownload=true)
+          startLlamaIfNeeded(selectedModelId, true).catch(e => addLog(`[llama.cpp] 다운로드 후 자동 시작 실패: ${e}`));
         }
       }
     }).then(fn => { unlistenComplete = fn; });
@@ -1745,13 +1762,14 @@ ${finalProcessingText}`;
     signal?: AbortSignal,
     mode: 'normal' | 'detailed' = 'normal',
     skipSaveStaged = false,
-    enqueueWrite?: (fn: () => Promise<void>) => Promise<void>
+    enqueueWrite?: (fn: () => Promise<void>) => Promise<void>,
+    workerIndex?: number
   ) {
     const isArray = Array.isArray(items);
     const itemList = isArray ? items : [items];
 
     for (const item of itemList) {
-      updateExtractedString(item.id, { translatedText: "번역 중..." });
+      updateExtractedString(item.id, { translatedText: "번역 중...", workerIndex });
     }
 
     const requestStartTime = Date.now();
@@ -1780,7 +1798,8 @@ ${finalProcessingText}`;
           updateExtractedString(item.id, {
             translatedText: cleanText,
             errorMsg: undefined,
-            translationTime: parseFloat(elapsed)
+            translationTime: parseFloat(elapsed),
+            workerIndex: undefined
           });
 
           if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패" && cleanText !== "번역 중단") {
@@ -1803,7 +1822,7 @@ ${finalProcessingText}`;
     } catch(e: any) {
       if (e.name === 'AbortError' || (e.message && e.message.includes('abort'))) {
         for (const item of itemList) {
-          updateExtractedString(item.id, { translatedText: "번역 중단" });
+          updateExtractedString(item.id, { translatedText: "번역 중단", workerIndex: undefined });
         }
         addLog(`[번역 중단] 작업이 사용자에 의해 중지되었습니다.`);
         throw e;
@@ -1813,7 +1832,8 @@ ${finalProcessingText}`;
       for (const item of itemList) {
         updateExtractedString(item.id, {
           translatedText: "번역 실패",
-          errorMsg: errMsg
+          errorMsg: errMsg,
+          workerIndex: undefined
         });
       }
       addLog(`[번역 실패] 오류: ${errMsg}`);
@@ -2117,7 +2137,7 @@ ${finalProcessingText}`;
 
       let currentGroupIndex = 0;
 
-      const worker = async () => {
+      const worker = async (workerIndex: number) => {
         while (currentGroupIndex < groupsToTranslate.length && !cancelRequested) {
           const groupIndex = currentGroupIndex++;
           if (groupIndex >= groupsToTranslate.length) break;
@@ -2153,7 +2173,8 @@ ${finalProcessingText}`;
               translationAbortController?.signal, 
               mode, 
               true, 
-              enqueueFileWrite
+              enqueueFileWrite,
+              workerIndex
             );
             
             for (const g of group) {
@@ -2178,7 +2199,7 @@ ${finalProcessingText}`;
 
       const workers = Array(Math.min(concurrency, groupsToTranslate.length))
         .fill(null)
-        .map(() => worker());
+        .map((_, idx) => worker(idx));
 
       await Promise.all(workers);
 
@@ -3054,7 +3075,7 @@ ${finalProcessingText}`;
                       </div>
                     {/if}
 
-                    <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
+                    <div class="string-row" class:translating={item.translatedText === "번역 중..."} style={item.translatedText === "번역 중..." && item.workerIndex !== undefined ? `--worker-color-hue: ${(item.workerIndex * 137.5) % 360}deg;` : ''}>
                       <div class="original-column">
                         <p class="original-text">{item.text}</p>
                       </div>
@@ -3147,7 +3168,7 @@ ${finalProcessingText}`;
                     {/if}
                   </div>
                 {:else}
-                  <div class="string-row" class:translating={item.translatedText === "번역 중..."}>
+                  <div class="string-row" class:translating={item.translatedText === "번역 중..."} style={item.translatedText === "번역 중..." && item.workerIndex !== undefined ? `--worker-color-hue: ${(item.workerIndex * 137.5) % 360}deg;` : ''}>
                     <div class="original-column">
                       <p class="original-text">{item.text}</p>
                     </div>
@@ -3808,12 +3829,12 @@ ${finalProcessingText}`;
       min-height: 80px;
 
       &.translating {
-        border-color: var(--accent-color);
-        box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+        border-color: hsl(var(--worker-color-hue, 220deg), 70%, 60%);
+        box-shadow: 0 0 12px hsla(var(--worker-color-hue, 220deg), 70%, 60%, 0.4);
         opacity: 0.9;
         
         .translate-column {
-          background: rgba(59, 130, 246, 0.05);
+          background: hsla(var(--worker-color-hue, 220deg), 70%, 60%, 0.05);
         }
       }
 

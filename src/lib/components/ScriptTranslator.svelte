@@ -1591,6 +1591,10 @@ ${finalProcessingText}`;
 
     let responseText = '';
 
+    const userContent = contextSection 
+      ? `${contextSection}\nOriginal text:\n${finalProcessingText}`
+      : `Original text:\n${finalProcessingText}`;
+
     if (isLlamaCpp) {
       // llama.cpp 서버 (OpenAI 호환 API)
       await startLlamaIfNeeded(selectedModelId);
@@ -1620,7 +1624,7 @@ ${finalProcessingText}`;
             { role: "system", content: systemContent },
             { role: "user", content: examplePrompt },
             { role: "assistant", content: exampleAssistantResponse },
-            { role: "user", content: prompt }
+            { role: "user", content: userContent }
           ],
           temperature: 0.0,
           max_tokens: 1024,
@@ -1662,7 +1666,7 @@ ${finalProcessingText}`;
             { role: "system", content: systemContent },
             { role: "user", content: examplePrompt },
             { role: "assistant", content: exampleAssistantResponse },
-            { role: "user", content: prompt }
+            { role: "user", content: userContent }
           ],
           options: {
             num_ctx: 4096,

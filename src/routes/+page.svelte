@@ -16,9 +16,11 @@
   let showSettingsModal = $state(false);
   let confirmStagedLoad = $state(false);
   let translationConcurrency = $state(1);
+  let enableGroupTranslation = $state(true);
 
   onMount(() => {
     confirmStagedLoad = localStorage.getItem('confirmStagedLoad') === 'true';
+    enableGroupTranslation = localStorage.getItem('enableGroupTranslation') !== 'false';
     const savedConcurrency = localStorage.getItem('translationConcurrency');
     if (savedConcurrency) {
       translationConcurrency = parseInt(savedConcurrency, 10) || 1;
@@ -98,6 +100,10 @@
 
   function toggleConfirmStagedLoad() {
     localStorage.setItem('confirmStagedLoad', confirmStagedLoad ? 'true' : 'false');
+  }
+
+  function toggleEnableGroupTranslation() {
+    localStorage.setItem('enableGroupTranslation', enableGroupTranslation ? 'true' : 'false');
   }
 
   function saveConcurrency() {
@@ -189,6 +195,22 @@
               <option value={5}>5</option>
             </select>
           </div>
+
+          <div class="setting-item" style="border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 1rem;">
+            <div class="setting-info">
+              <span class="setting-title">연속 대사 묶어서 번역 (컨텍스트 유지)</span>
+              <span class="setting-desc">활성화 시 앞뒤 문맥(Context)을 파악하여 덩어리째 자연스럽게 번역합니다. 비활성화 시 각 대사를 개별적으로 번역합니다.</span>
+            </div>
+            <label class="switch" for="enable-group-translation-checkbox">
+              <input 
+                id="enable-group-translation-checkbox"
+                type="checkbox" 
+                bind:checked={enableGroupTranslation} 
+                onchange={toggleEnableGroupTranslation}
+              >
+              <span class="slider round"></span>
+            </label>
+          </div>
         </div>
       </div>
     </div>
@@ -205,6 +227,7 @@
       <ScriptTranslator 
         bind:this={scriptTranslatorRef} 
         isDragging={isDragging && activeTab === 'script'} 
+        enableGroupTranslation={enableGroupTranslation}
       />
     {:else if activeTab === 'image'}
       <ImageTranslator 

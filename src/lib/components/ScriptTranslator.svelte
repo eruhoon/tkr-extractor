@@ -30,7 +30,7 @@
     workerIndex?: number;
   }
 
-  let { isDragging = false } = $props();
+  let { isDragging = false, enableGroupTranslation = true } = $props();
 
   let originalFilePath = $state('');
   let scripts = $state.raw<ScriptEntry[]>([]);
@@ -2185,13 +2185,19 @@ ${finalProcessingText}`;
 
       // Group unique items to avoid concurrent work on same groups
       const groupsToTranslate: ExtractedString[][] = [];
-      const processedIds = new Set<number>();
-      for (const item of itemsToTranslate) {
-        if (processedIds.has(item.id)) continue;
-        const group = findConnectedRowsGroup(item.id);
-        groupsToTranslate.push(group);
-        for (const g of group) {
-          processedIds.add(g.id);
+      if (enableGroupTranslation) {
+        const processedIds = new Set<number>();
+        for (const item of itemsToTranslate) {
+          if (processedIds.has(item.id)) continue;
+          const group = findConnectedRowsGroup(item.id);
+          groupsToTranslate.push(group);
+          for (const g of group) {
+            processedIds.add(g.id);
+          }
+        }
+      } else {
+        for (const item of itemsToTranslate) {
+          groupsToTranslate.push([item]);
         }
       }
 
@@ -2534,7 +2540,7 @@ ${finalProcessingText}`;
     }
 
     // 번역 시작
-    const group = findConnectedRowsGroup(item.id);
+    const group = enableGroupTranslation ? findConnectedRowsGroup(item.id) : [item];
     const controller = new AbortController();
     
     for (const g of group) {

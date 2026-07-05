@@ -1464,7 +1464,9 @@
       }
     }
 
-    let finalProcessingText = processedLines.map(p => p.processing).join('\n');
+    let finalProcessingText = hasMultiLine 
+      ? processedLines.map((p, idx) => `<line_${idx}>${p.processing}</line_${idx}>`).join('\n')
+      : processedLines.map(p => p.processing).join('\n');
 
     let prompt = "";
     if (mode === 'detailed') {
@@ -1475,7 +1477,7 @@ Step 2: Based on the analysis, write the natural, colloquial, and fluent Korean 
 You MUST format your output exactly as follows:
 [Analysis]: <Your brief analysis of the nuance, tone, and context in Korean>
 [Korean Translation]: 
-${hasMultiLine ? 'Korean translation of line 0\nKorean translation of line 1' : '<Your high-quality Korean translation here>'}
+${hasMultiLine ? '<line_0>Korean translation of line 0</line_0>\n<line_1>Korean translation of line 1</line_1>' : '<Your high-quality Korean translation here>'}
 
 Rules:
 1. Maintain the meaning and nuance of the original Japanese.
@@ -1489,7 +1491,7 @@ Rules:
    - A standalone or ending small tsu (e.g. "っ", "っ！", "…っ") represents a gasp, groan, breath, or abrupt cutoff of speech. Do not ignore it or translate it literally (like "tsu"). Translate it into a natural Korean expression of exclamation, sigh, or cutoff (e.g., "앗!", "윽!", "읏…", "흡!", or simply "…!").
    - Conversational starters or particles such as "だって" (datte) or "だって…" indicate a defensive, pleading, or explaining tone. Translate them to colloquial Korean starters like "그치만...", "하지만...", "그야..." instead of literal dictionary translations.
 ${processedLines.some(p => p.isScriptCodeBlock) ? '9. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
-${hasMultiLine ? '10. CRITICAL: Preserve the exact number of line breaks (\\n) and original line structure in your translation.\n' : ''}
+${hasMultiLine ? '10. CRITICAL: You MUST preserve the XML-like tags (<line_0>, <line_1>, etc.) in your output. Translate the content of each tag and put it in the corresponding tag in the output. Do not merge or skip tags.\n' : ''}
 CRITICAL: The [Korean Translation] section MUST be written in Korean (한국어) only. Do not use English.
 
 Original text:
@@ -1509,7 +1511,7 @@ Rules:
    - A standalone or ending small tsu (e.g. "っ", "っ！", "…っ") represents a gasp, groan, breath, or abrupt cutoff of speech. Do not ignore it or translate it literally (like "tsu"). Translate it into a natural Korean expression of exclamation, sigh, or cutoff (e.g., "앗!", "윽!", "읏…", "흡!", or simply "…!").
    - Conversational starters or particles such as "だって" (datte) or "だって…" indicate a defensive, pleading, or explaining tone. Translate them to colloquial Korean starters like "그치만...", "하지만...", "그야..." instead of literal dictionary translations.
 ${processedLines.some(p => p.isScriptCodeBlock) ? '10. Preserve comment placeholders like __COMMENT_LINE_0__, __COMMENT_LINE_1__ exactly. Do NOT translate or remove them.\n' : ''}
-${hasMultiLine ? '11. CRITICAL: Preserve the exact number of line breaks (\\n) and original line structure in your translation.\n' : ''}
+${hasMultiLine ? '11. CRITICAL: You MUST preserve the XML-like tags (<line_0>, <line_1>, etc.) in your output. Translate the content of each tag and put it in the corresponding tag in the output. Do not merge or skip tags.\n' : ''}
 CRITICAL: The final output MUST be written in Korean (한국어). Do not use English.
 
 Original text:
@@ -1525,16 +1527,21 @@ ${finalProcessingText}`;
     if (isLlamaCpp) {
       // llama.cpp 서버 (OpenAI 호환 API)
       await startLlamaIfNeeded(selectedModelId);
-      const examplePrompt = prompt.replace(finalProcessingText, hasMultiLine ? "なるほど。\nわかった。" : "なるほど。");
+      const examplePrompt = prompt.replace(
+        finalProcessingText, 
+        hasMultiLine 
+          ? "<line_0>なるほど。</line_0>\n<line_1>わかった。</line_1>" 
+          : "なるほど。"
+      );
       const systemContent = mode === 'detailed'
         ? "You are a professional Japanese to Korean game script translator. Analyze the nuance and context of the text, then output the final translation in the specified format."
         : "You are a professional Japanese to Korean game script translator. Output ONLY the Korean translation, nothing else.";
       const exampleAssistantResponse = mode === 'detailed'
         ? (hasMultiLine 
-            ? "[Analysis]: 상대방의 말에 수긍하고 이해했다고 대답하는 상황입니다.\n[Korean Translation]:\n그렇군요.\n알겠습니다."
+            ? "[Analysis]: 상대방의 말에 수긍하고 이해했다고 대답하는 상황입니다.\n[Korean Translation]:\n<line_0>그렇군요.</line_0>\n<line_1>알겠습니다.</line_1>"
             : "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하거나 동의하는 어조입니다.\n[Korean Translation]: 그렇군요.")
         : (hasMultiLine
-            ? "그렇군요.\n알겠습니다."
+            ? "<line_0>그렇군요.</line_0>\n<line_1>알겠습니다.</line_1>"
             : "그렇군요.");
 
       const lcResponse = await fetch("http://127.0.0.1:8080/v1/chat/completions", {
@@ -1561,16 +1568,21 @@ ${finalProcessingText}`;
     } else {
       // Ollama API
       const ollamaModel = selectedModelId.startsWith('ollama:') ? selectedModelId.slice(7) : ollamaModelName;
-      const examplePrompt = prompt.replace(finalProcessingText, hasMultiLine ? "なるほど。\nわかった。" : "なるほど。");
+      const examplePrompt = prompt.replace(
+        finalProcessingText, 
+        hasMultiLine 
+          ? "<line_0>なるほど。</line_0>\n<line_1>わかった。</line_1>" 
+          : "なるほど。"
+      );
       const systemContent = mode === 'detailed'
         ? "You are a professional Japanese to Korean game script translator. You MUST output your translation in the specified format with [Analysis] and [Korean Translation]."
         : "You are a professional Japanese to Korean game script translator. You MUST output your translation in Korean (한국어) only. Do not use English.";
       const exampleAssistantResponse = mode === 'detailed'
         ? (hasMultiLine 
-            ? "[Analysis]: 상대방의 말에 수긍하고 이해했다고 대답하는 상황입니다.\n[Korean Translation]:\n그렇군요.\n알겠습니다."
+            ? "[Analysis]: 상대방의 말에 수긍하고 이해했다고 대답하는 상황입니다.\n[Korean Translation]:\n<line_0>그렇군요.</line_0>\n<line_1>알겠습니다.</line_1>"
             : "[Analysis]: 상대방의 말에 고개를 끄덕이며 수긍하는 상황입니다.\n[Korean Translation]: 그렇군요.")
         : (hasMultiLine
-            ? "그렇군요.\n알겠습니다."
+            ? "<line_0>그렇군요.</line_0>\n<line_1>알겠습니다.</line_1>"
             : "그렇군요.");
 
       const response = await fetch("http://127.0.0.1:11434/api/chat", {
@@ -1727,10 +1739,41 @@ ${finalProcessingText}`;
     let tagParsedSuccessfully = false;
 
     if (hasMultiLine) {
-      const splitLines = cleaned.split('\n');
-      if (splitLines.length === processedLines.length) {
+      // 1. XML-like 태그 기반 파싱 시도 (<line_idx>...</line_idx>)
+      const extractedTags: string[] = [];
+      let allTagsFound = true;
+      
+      for (let idx = 0; idx < processedLines.length; idx++) {
+        const startTag = `<line_${idx}>`;
+        const endTag = `</line_${idx}>`;
+        const startIdx = cleaned.indexOf(startTag);
+        const endIdx = cleaned.indexOf(endTag, startIdx + startTag.length);
+        
+        if (startIdx !== -1 && endIdx !== -1) {
+          const content = cleaned.substring(startIdx + startTag.length, endIdx).trim();
+          extractedTags.push(content);
+        } else {
+          allTagsFound = false;
+          break;
+        }
+      }
+      
+      if (allTagsFound && extractedTags.length === processedLines.length) {
         tagParsedSuccessfully = true;
-        parsedLines = splitLines;
+        parsedLines = extractedTags;
+      } else {
+        // 2. 태그 파싱 실패 시 예외적으로 개행 단위 분할 시도 및 잔여 태그 제거
+        const splitLines = cleaned.split('\n');
+        const cleanedSplitLines = splitLines.map((line, idx) => {
+          return line
+            .replace(new RegExp(`<line_${idx}>`, 'g'), '')
+            .replace(new RegExp(`</line_${idx}>`, 'g'), '')
+            .trim();
+        });
+        if (cleanedSplitLines.length === processedLines.length) {
+          tagParsedSuccessfully = true;
+          parsedLines = cleanedSplitLines;
+        }
       }
     }
 
@@ -1805,6 +1848,12 @@ ${finalProcessingText}`;
           if (selectedFolder && cleanText && cleanText !== "번역 중..." && cleanText !== "번역 실패" && cleanText !== "번역 중단") {
             cacheData[item.text] = cleanText;
           }
+        } else {
+          // 일괄 번역 시 이미 유효한 번역이 있어 업데이트 대상이 아닌 경우, 기존 텍스트 및 workerIndex 복원
+          updateExtractedString(item.id, {
+            translatedText: item.translatedText,
+            workerIndex: undefined
+          });
         }
       }
       

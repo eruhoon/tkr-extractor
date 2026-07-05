@@ -52,6 +52,21 @@
   let searchQuery = $state('');
   let filterMode = $state<'all' | 'untranslated' | 'completed' | 'error'>('all');
   
+  // 필터 고정 상태 추가
+  let frozenItemIds = $state<Set<number> | null>(null);
+  let prevFilterMode: 'all' | 'untranslated' | 'completed' | 'error' = 'all';
+  let prevSearchQuery = '';
+  let prevSidebarItem: SidebarItem | null = null;
+
+  $effect(() => {
+    if (filterMode !== prevFilterMode || searchQuery !== prevSearchQuery || selectedSidebarItem !== prevSidebarItem) {
+      prevFilterMode = filterMode;
+      prevSearchQuery = searchQuery;
+      prevSidebarItem = selectedSidebarItem;
+      frozenItemIds = null;
+    }
+  });
+
   let showContext = $derived(searchQuery.trim() !== '' || filterMode !== 'all');
   let estimatedRowHeight = $derived(showContext ? 220 : 110);
   const bufferItems = 30; // 8 -> 30으로 늘려서 스크롤 시 마운트/언마운트 빈도를 줄여 떨림 방지
@@ -64,6 +79,11 @@
   // 실시간 필터 및 검색 적용
   let filteredStrings = $derived.by<ExtractedString[]>(() => {
     let result = extractedStrings;
+
+    const frozenIds = frozenItemIds;
+    if (frozenIds) {
+      return result.filter(item => frozenIds.has(item.id));
+    }
 
     // 1. 필터 모드 적용
     if (filterMode === 'untranslated') {
@@ -2147,6 +2167,10 @@ ${finalProcessingText}`;
       i.validationError !== undefined
     );
     if (itemsToTranslate.length === 0) return;
+
+    // 필터 결과 고정
+    frozenItemIds = new Set(filteredStrings.map(i => i.id));
+
     isTranslating = true;
     cancelRequested = false;
     translationAbortController = new AbortController();
@@ -3089,6 +3113,21 @@ ${finalProcessingText}`;
           <div class="scroll-info">
             검색 결과: <strong style="color: var(--accent-color);">{filteredStrings.length}</strong> / {extractedStrings.length}개
           </div>
+
+          {#if frozenItemIds}
+            <div class="filter-frozen-wrapper">
+              <span class="frozen-badge-icon">🔒</span>
+              <span class="frozen-badge-text">필터 고정됨 ({frozenItemIds.size}개)</span>
+              <button 
+                type="button" 
+                class="btn-unfreeze" 
+                onclick={() => frozenItemIds = null}
+                title="필터 고정을 해제하고 목록을 새로고침합니다"
+              >
+                필터 새로고침
+              </button>
+            </div>
+          {/if}
 
           {#if searchQuery.trim() !== '' || filterMode !== 'all'}
             <button 
@@ -4475,6 +4514,51 @@ ${finalProcessingText}`;
       &:disabled {
         opacity: 0.5;
         cursor: not-allowed;
+      }
+    }
+
+    .filter-frozen-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.25);
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      color: #fcd34d;
+      white-space: nowrap;
+
+      .frozen-badge-icon {
+        font-size: 0.9rem;
+      }
+
+      .frozen-badge-text {
+        font-weight: 500;
+      }
+
+      .btn-unfreeze {
+        background: #f59e0b;
+        color: #0f172a;
+        border: none;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        margin-left: 0.25rem;
+        transition: background-color 0.2s, transform 0.1s;
+
+        &:hover {
+          background: #d97706;
+        }
+
+        &:active {
+          transform: scale(0.95);
+        }
       }
     }
   }
